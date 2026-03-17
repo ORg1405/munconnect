@@ -1,3 +1,7 @@
+import { signOut } from "firebase/auth";
+import { auth } from "../firebase";
+import { useAuth } from "../AuthContext";
+
 const tabs = [
   {
     id: "calendar",
@@ -33,7 +37,23 @@ const tabs = [
   },
 ];
 
-export default function Sidebar({ activeTab, setActiveTab }) {
+const adminTabs = [
+  {
+    id: "pending",
+    label: "Revisão pendente",
+    adminOnly: true,
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+        <circle cx="7" cy="7" r="5.5" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M7 4v3.5l2 1.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+];
+
+export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
+  const { user } = useAuth();
+
   return (
     <aside style={{
       width: 210,
@@ -74,19 +94,75 @@ export default function Sidebar({ activeTab, setActiveTab }) {
             <span style={{ display: "flex", alignItems: "center" }}>{tab.icon}</span>
             <span style={{ flex: 1 }}>{tab.label}</span>
             {tab.soon && (
-              <span style={{
-                fontSize: 10,
-                background: "#e8e6e0",
-                color: "#888",
-                padding: "1px 6px",
-                borderRadius: 8,
-              }}>
+              <span style={{ fontSize: 10, background: "#e8e6e0", color: "#888", padding: "1px 6px", borderRadius: 8 }}>
                 em breve
               </span>
             )}
           </button>
         );
       })}
+
+      {isAdmin && (
+        <>
+          <div style={{ margin: "12px 16px 6px", fontSize: 10, color: "#aaa", fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+            Admin
+          </div>
+          {adminTabs.map((tab) => {
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 10,
+                  padding: "9px 16px",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  background: isActive ? "#ffffff" : "transparent",
+                  color: isActive ? "#cc6600" : "#886633",
+                  fontWeight: isActive ? 500 : 400,
+                  border: "none",
+                  borderRight: isActive ? "2px solid #cc6600" : "2px solid transparent",
+                  textAlign: "left",
+                  width: "100%",
+                }}
+              >
+                <span style={{ display: "flex", alignItems: "center" }}>{tab.icon}</span>
+                <span style={{ flex: 1 }}>{tab.label}</span>
+              </button>
+            );
+          })}
+        </>
+      )}
+
+      {/* Usuário logado + logout */}
+      <div style={{ marginTop: "auto", padding: "12px 16px", borderTop: "0.5px solid #e0ddd6" }}>
+        <div style={{ fontSize: 11, color: "#888", marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {user?.email}
+        </div>
+        {isAdmin && (
+          <span style={{ fontSize: 10, background: "#E1F5EE", color: "#0F6E56", padding: "1px 7px", borderRadius: 8, display: "inline-block", marginBottom: 8 }}>
+            admin
+          </span>
+        )}
+        <button
+          onClick={() => signOut(auth)}
+          style={{
+            width: "100%",
+            padding: "6px 0",
+            fontSize: 12,
+            border: "0.5px solid #ddd",
+            borderRadius: 6,
+            background: "#fff",
+            cursor: "pointer",
+            color: "#888",
+          }}
+        >
+          Sair
+        </button>
+      </div>
     </aside>
   );
 }

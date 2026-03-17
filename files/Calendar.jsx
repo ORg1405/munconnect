@@ -10,7 +10,10 @@ const MONTHS = [
 ];
 const DAY_NAMES = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 
-export default function Calendar({ isAdmin: IS_ADMIN = true }) {
+// ─── Mude para false para desativar o modo admin ───────────────────────────
+const IS_ADMIN = true;
+
+export default function Calendar() {
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth());
@@ -161,17 +164,20 @@ export default function Calendar({ isAdmin: IS_ADMIN = true }) {
                         fontSize: 10,
                         marginTop: 3,
                         padding: "2px 5px",
-                        borderRadius: 4,
+                        borderRadius: first ? "4px 4px 4px 4px" : "0px",
                         background: c.bg,
                         color: c.text,
-                        border: `1px solid ${c.border}`,
+                        borderTop: `1px solid ${c.border}`,
+                        borderBottom: `1px solid ${c.border}`,
+                        borderLeft: first ? `1px solid ${c.border}` : "none",
+                        borderRight: `1px solid ${c.border}`,
                         cursor: "pointer",
                         whiteSpace: "nowrap",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                       }}
                     >
-                      {ev.name}
+                      {first ? ev.name : " "}
                     </div>
                   );
                 })}

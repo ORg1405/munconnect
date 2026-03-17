@@ -14,9 +14,10 @@
 
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCFdgZHich31xb3VpRp9PL7XI6LUTaL60A",
+  apiKey: "AIzaSyDu9KrryzTikcTTTKaWCWBISfk4aUvPJtU",
   authDomain: "munconnectg.firebaseapp.com",
   projectId: "munconnectg",
   storageBucket: "munconnectg.firebasestorage.app",
@@ -26,3 +27,4 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
+export const auth = getAuth(app);
