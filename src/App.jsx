@@ -1,35 +1,34 @@
-import { useState } from "react";
-import { signOut } from "firebase/auth";
-import { auth } from "./firebase";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./AuthContext";
-import Sidebar from "./components/Sidebar";
-import Calendar from "./components/Calendar";
-import ComingSoon from "./components/ComingSoon";
+import Landing from "./Landing";
 import LoginPage from "./components/LoginPage";
+import Dashboard from "./dashboard";
 
-function AppContent() {
-  const { user, isAdmin } = useAuth();
-  const [activeTab, setActiveTab] = useState("calendar");
-
-  if (!user) return <LoginPage />;
-
-  return (
-    <div style={{ display: "flex", height: "100vh", fontFamily: "system-ui, sans-serif", background: "#f9f9f8" }}>
-      <Sidebar activeTab={activeTab} setActiveTab={setActiveTab} isAdmin={isAdmin} />
-      <main style={{ flex: 1, overflow: "auto" }}>
-        {activeTab === "calendar" && <Calendar isAdmin={isAdmin} />}
-        {activeTab === "motion" && <ComingSoon title="Gerador de Moção" />}
-        {activeTab === "debate" && <ComingSoon title="IA de Debate" />}
-        {activeTab === "pending" && <ComingSoon title="Revisão Pendente" />}
-      </main>
-    </div>
-  );
+function ProtectedRoute({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) return <div />;
+  if (!user) return <Navigate to="/login" replace />;
+  return children;
 }
 
 export default function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <Routes>
+          <Route path="/" element={<Landing />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route
+            path="/app/*"
+            element={
+              <ProtectedRoute>
+                <Dashboard />
+              </ProtectedRoute>
+            }
+          />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }

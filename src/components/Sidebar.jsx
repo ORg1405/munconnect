@@ -1,6 +1,7 @@
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
 import { useAuth } from "../AuthContext";
+import { useNavigate } from "react-router-dom";
 
 const tabs = [
   {
@@ -17,7 +18,6 @@ const tabs = [
   {
     id: "motion",
     label: "Gerador de Moção",
-    soon: true,
     icon: (
       <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
         <path d="M2 4h10M2 7h7M2 10h5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
@@ -53,6 +53,7 @@ const adminTabs = [
 
 export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
 
   return (
     <aside style={{
@@ -148,7 +149,7 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
           </span>
         )}
         <button
-          onClick={() => signOut(auth)}
+          onClick={() => signOut(auth).then(() => navigate("/"))}
           style={{
             width: "100%",
             padding: "6px 0",

@@ -1,0 +1,66 @@
+:root {
+  /* Background layers (cool navy, matches brand) */
+  --bg-base:        hsl(210 42% 5%);
+  --bg-elevated:    hsl(210 38% 8%);
+  --bg-overlay:     hsl(210 34% 11%);
+
+  /* Brand: anchored on #042C53 → electric cyan highlights */
+  --brand-700:      #042C53;
+  --brand-600:      hsl(209 78% 28%);
+  --brand-500:      hsl(207 72% 42%);
+  --brand-400:      hsl(205 68% 58%);
+  --brand-glow:     hsl(199 92% 58%);
+
+  /* Accent: warm gold */
+  --accent-400:     hsl(38 92% 65%);
+  --accent-500:     hsl(35 95% 55%);
+
+  /* Neutrals */
+  --text-primary:   hsl(220 15% 96%);
+  --text-secondary: hsl(220 10% 72%);
+  --text-muted:     hsl(220 8% 50%);
+  --border:         hsl(210 20% 18%);
+  --border-strong:  hsl(210 22% 25%);
+
+  /* Semantic */
+  --success:        hsl(160 70% 50%);
+  --warning:        hsl(38 95% 60%);
+  --danger:         hsl(0 75% 60%);
+
+  /* Gradients */
+  --grad-brand:    linear-gradient(135deg, var(--brand-600) 0%, var(--brand-500) 48%, hsl(199 85% 52%) 100%);
+  --grad-aurora:   radial-gradient(ellipse 80% 50% at 50% 0%, hsl(199 92% 58% / 0.14), transparent 70%);
+  --grad-rim:      linear-gradient(180deg, hsl(220 15% 96% / 0.12), transparent);
+
+  /* Shadows / glow */
+  --ring-soft:   0 0 0 1px hsl(220 15% 96% / 0.06), inset 0 1px 0 hsl(220 15% 96% / 0.04);
+  --glow-brand:  0 0 40px hsl(199 92% 58% / 0.22);
+
+  /* Typography scale */
+  --fs-display:  clamp(3rem, 8vw, 6.5rem);
+  --fs-h1:       clamp(2.25rem, 5vw, 3.75rem);
+  --fs-h2:       clamp(1.75rem, 3.5vw, 2.5rem);
+  --fs-h3:       1.5rem;
+  --fs-lead:     1.25rem;
+  --fs-body:     1rem;
+  --fs-small:    0.875rem;
+  --fs-tiny:     0.75rem;
+
+  /* Font families */
+  --font-display: 'Instrument Serif', Georgia, serif;
+  --font-ui:      'Inter', 'SF Pro Display', system-ui, sans-serif;
+  --font-mono:    'JetBrains Mono', 'Fira Code', monospace;
+
+  /* Easing */
+  --ease-out-expo: cubic-bezier(0.22, 1, 0.36, 1);
+
+  /* Radii */
+  --radius-card:   12px;
+  --radius-btn:    10px;
+  --radius-badge:  999px;
+  --radius-dialog: 16px;
+
+  /* Container */
+  --container-max: 1200px;
+  --container-pad: clamp(16px, 5vw, 80px);
+}
