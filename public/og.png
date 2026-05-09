@@ -8,34 +8,34 @@
 </style>
 
 <div style="padding:1rem 0">
-<h2 class="sr-only">OG image preview corrigido para MUNConnect, 1200 por 630 pixels.</h2>
+<h2 class="sr-only">OG image preview para MUNConnect, 1200 por 630 pixels.</h2>
 
 <div style="display:flex;gap:6px;margin-bottom:12px">
   <button class="og-tab active" id="tab-en" onclick="setLang('en')">English</button>
   <button class="og-tab" id="tab-pt" onclick="setLang('pt')">Português</button>
 </div>
 
-<div style="width:100%;max-width:600px;aspect-ratio:1200/630;overflow:hidden;border-radius:var(--border-radius-lg);border:0.5px solid var(--color-border-tertiary)">
-  <div id="og-capture" style="width:1200px;height:630px;transform:scale(0.5);transform-origin:top left;background:hsl(222,25%,5%);position:relative;overflow:hidden;font-family:Inter,sans-serif;color:hsl(220,15%,96%)">
+<div id="og-wrapper" style="width:100%;max-width:600px;height:315px;overflow:hidden;border-radius:var(--border-radius-lg);border:0.5px solid var(--color-border-tertiary)">
+  <div id="og-capture" style="width:1200px;height:630px;transform:scale(0.5);transform-origin:top left;background:#0d1019;position:relative;overflow:hidden;font-family:Inter,sans-serif">
 
-    <div style="position:absolute;top:-300px;left:50%;margin-left:-700px;width:1400px;height:800px;background:radial-gradient(ellipse 50% 50% at 50% 50%,hsla(258,90%,66%,.38) 0%,hsla(243,75%,60%,.14) 40%,transparent 70%);pointer-events:none"></div>
-    <div style="position:absolute;bottom:-250px;left:-250px;width:800px;height:600px;background:radial-gradient(ellipse 50% 50% at 50% 50%,hsla(258,90%,66%,.16) 0%,transparent 70%);pointer-events:none"></div>
+    <div style="position:absolute;top:-300px;left:50%;margin-left:-700px;width:1400px;height:800px;background:radial-gradient(ellipse 50% 50% at 50% 50%,rgba(139,92,246,.38) 0%,rgba(99,102,241,.14) 40%,transparent 70%);pointer-events:none"></div>
+    <div style="position:absolute;bottom:-250px;left:-250px;width:800px;height:600px;background:radial-gradient(ellipse 50% 50% at 50% 50%,rgba(139,92,246,.16) 0%,transparent 70%);pointer-events:none"></div>
 
     <div style="position:absolute;top:70px;left:90px;display:flex;align-items:center;gap:14px">
-      <div style="width:12px;height:12px;background:hsl(35,95%,55%);border-radius:50%"></div>
-      <span style="font-size:22px;font-weight:600;letter-spacing:.2em;color:hsl(220,10%,75%);text-transform:uppercase">MUNCONNECT</span>
+      <div style="width:12px;height:12px;border-radius:50%;background:#f59e0b;flex-shrink:0"></div>
+      <span style="font-size:22px;font-weight:600;letter-spacing:.2em;color:#b0b8c8;text-transform:uppercase;font-family:Inter,sans-serif">MUNCONNECT</span>
     </div>
 
     <div style="position:absolute;top:50%;left:90px;right:90px;transform:translateY(-50%)">
-      <div id="og-title" style="font-family:'Instrument Serif',Georgia,serif;font-size:128px;line-height:1;font-weight:400;margin:0 0 32px;letter-spacing:-.02em;color:hsl(220,15%,96%)">
-        AI for <em id="og-em" style="font-style:italic;color:hsl(258,85%,77%)">Model UN</em>
+      <div id="og-title" style="font-family:'Instrument Serif',Georgia,serif;font-size:128px;line-height:1;font-weight:400;margin:0 0 32px;letter-spacing:-.02em;color:#f0f2f7">
+        AI for <em style="font-style:italic;color:#a78bfa">Model UN</em>
       </div>
-      <p id="og-sub" style="font-size:30px;line-height:1.45;color:hsl(220,10%,75%);max-width:920px;margin:0;font-weight:400">Motion generator, debate simulator, and conference calendar — all in one place.</p>
+      <p id="og-sub" style="font-size:30px;line-height:1.45;color:#b0b8c8;max-width:920px;margin:0;font-weight:400;font-family:Inter,sans-serif">Motion generator, debate simulator, and conference calendar — all in one place.</p>
     </div>
 
     <div style="position:absolute;bottom:70px;left:90px;right:90px;display:flex;justify-content:space-between;align-items:center">
-      <div style="width:80px;height:2px;background:linear-gradient(90deg,hsl(35,95%,55%),transparent)"></div>
-      <span style="font-size:18px;color:hsl(220,10%,75%);letter-spacing:.05em;font-weight:500">munconnect-two.vercel.app</span>
+      <div style="width:80px;height:2px;background:linear-gradient(90deg,#f59e0b,transparent)"></div>
+      <span style="font-size:18px;color:#b0b8c8;letter-spacing:.05em;font-weight:500;font-family:Inter,sans-serif">munconnect-two.vercel.app</span>
     </div>
   </div>
 </div>
@@ -49,35 +49,41 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
 const COPY={
-  en:{pre:'AI for ',em:'Model UN',sub:'Motion generator, debate simulator, and conference calendar — all in one place.'},
-  pt:{pre:'IA para ',em:'Model UN',sub:'Gerador de moções, simulador de debate e calendário de conferências — tudo em um só lugar.'}
+  en:{title:'AI for <em style="font-style:italic;color:#a78bfa">Model UN</em>',sub:'Motion generator, debate simulator, and conference calendar — all in one place.'},
+  pt:{title:'IA para <em style="font-style:italic;color:#a78bfa">Model UN</em>',sub:'Gerador de moções, simulador de debate e calendário de conferências — tudo em um só lugar.'}
 };
 function setLang(lang){
-  const c=COPY[lang];
-  const title=document.getElementById('og-title');
-  title.innerHTML=c.pre+'<em id="og-em" style="font-style:italic;color:hsl(258,85%,77%)">'+c.em+'</em>';
-  document.getElementById('og-sub').textContent=c.sub;
+  document.getElementById('og-title').innerHTML=COPY[lang].title;
+  document.getElementById('og-sub').textContent=COPY[lang].sub;
   document.getElementById('tab-en').classList.toggle('active',lang==='en');
   document.getElementById('tab-pt').classList.toggle('active',lang==='pt');
 }
 async function downloadOG(){
   const btn=document.getElementById('dl-btn');
   const status=document.getElementById('dl-status');
-  const original=document.getElementById('og-capture');
+  const wrapper=document.getElementById('og-wrapper');
+  const capture=document.getElementById('og-capture');
   btn.disabled=true;
-  status.textContent='Renderizando...';
+  status.textContent='Renderizando... (não feche)';
   try{
     if(document.fonts&&document.fonts.ready)await document.fonts.ready;
-    const clone=original.cloneNode(true);
-    clone.style.transform='none';
-    clone.style.position='absolute';
-    clone.style.left='-99999px';
-    clone.style.top='0';
-    document.body.appendChild(clone);
+    wrapper.style.overflow='visible';
+    wrapper.style.height='630px';
+    capture.style.transform='none';
     await new Promise(r=>requestAnimationFrame(r));
-    await new Promise(r=>setTimeout(r,200));
-    const canvas=await html2canvas(clone,{width:1200,height:630,scale:1,backgroundColor:'#0d1019',logging:false,useCORS:true});
-    document.body.removeChild(clone);
+    await new Promise(r=>setTimeout(r,600));
+    const canvas=await html2canvas(capture,{
+      width:1200,height:630,scale:1,
+      backgroundColor:'#0d1019',
+      logging:false,
+      useCORS:true,
+      allowTaint:true,
+      windowWidth:1200,
+      windowHeight:630
+    });
+    capture.style.transform='scale(0.5)';
+    wrapper.style.overflow='hidden';
+    wrapper.style.height='315px';
     const link=document.createElement('a');
     link.download='og.png';
     link.href=canvas.toDataURL('image/png');
@@ -85,7 +91,11 @@ async function downloadOG(){
     status.textContent='✓ Baixado!';
     setTimeout(()=>{status.textContent=''},4000);
   }catch(err){
+    capture.style.transform='scale(0.5)';
+    wrapper.style.overflow='hidden';
+    wrapper.style.height='315px';
     status.textContent='✗ Erro: '+err.message;
+    console.error(err);
   }finally{
     btn.disabled=false;
   }
