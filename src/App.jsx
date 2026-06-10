@@ -3,6 +3,8 @@ import { AuthProvider, useAuth } from "./AuthContext";
 import Landing from "./Landing";
 import LoginPage from "./components/LoginPage";
 import Dashboard from "./dashboard";
+import ConferencePage from "./components/conference/ConferencePage";
+import CommitteePage from "./components/conference/CommitteePage";
 
 function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
@@ -18,6 +20,12 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<LoginPage />} />
+          {/* Protótipo da simulação (dados mockados, sem auth) */}
+          <Route path="/conference/:conferenceId" element={<ConferencePage />} />
+          <Route
+            path="/conference/:conferenceId/committee/:committeeId"
+            element={<CommitteePage />}
+          />
           <Route
             path="/app/*"
             element={
