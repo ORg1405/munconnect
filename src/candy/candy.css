@@ -1,0 +1,91 @@
+@import url("https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&family=Baloo+2:wght@500;600;700;800&display=swap");
+
+:root {
+  --candy-cream: #fff7ec;
+  --candy-pink: #ff6fa5;
+  --candy-rose: #ff9ec4;
+  --candy-amber: #ffb347;
+  --candy-honey: #ffcd58;
+  --candy-mint: #6fd3b8;
+  --candy-grape: #9b6bdc;
+  --candy-cocoa: #5b3a29;
+}
+
+.candy-root {
+  font-family: "Fredoka", system-ui, sans-serif;
+  color: var(--candy-cocoa);
+  background: var(--candy-cream);
+  overflow-x: hidden;
+}
+
+.candy-display {
+  font-family: "Baloo 2", "Fredoka", sans-serif;
+}
+
+/* Animated sunny gradient background */
+@keyframes candyGradient {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.candy-animated-bg {
+  background: linear-gradient(120deg, #fff7ec, #ffe7c2, #ffd9e6, #ffe7c2, #fff7ec);
+  background-size: 300% 300%;
+  animation: candyGradient 18s ease infinite;
+}
+
+/* Floating candies */
+@keyframes floatY {
+  0%, 100% { transform: translateY(0) rotate(var(--rot, 0deg)); }
+  50%      { transform: translateY(-22px) rotate(calc(var(--rot, 0deg) + 8deg)); }
+}
+.candy-float { animation: floatY var(--dur, 6s) ease-in-out infinite; }
+
+/* Wobble on hover */
+@keyframes wobble {
+  0%, 100% { transform: rotate(0deg); }
+  25%      { transform: rotate(-6deg); }
+  75%      { transform: rotate(6deg); }
+}
+.candy-wobble:hover { animation: wobble 0.5s ease-in-out; }
+
+/* Marquee strip */
+@keyframes candyMarquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+.candy-marquee {
+  display: inline-flex;
+  white-space: nowrap;
+  animation: candyMarquee 22s linear infinite;
+}
+
+/* Shine sweep */
+@keyframes shine {
+  0%   { transform: translateX(-120%) skewX(-20deg); }
+  60%, 100% { transform: translateX(220%) skewX(-20deg); }
+}
+.candy-shine::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  transform: translateX(-120%) skewX(-20deg);
+}
+.candy-shine:hover::after { animation: shine 0.9s ease; }
+
+/* Blinking sparkle */
+@keyframes twinkle {
+  0%, 100% { opacity: 0.2; transform: scale(0.7); }
+  50%      { opacity: 1;   transform: scale(1.1); }
+}
+.candy-twinkle { animation: twinkle var(--dur, 2.4s) ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .candy-animated-bg,
+  .candy-float,
+  .candy-marquee,
+  .candy-twinkle { animation: none !important; }
+}
+
+.candy-scroll-smooth { scroll-behavior: smooth; }
