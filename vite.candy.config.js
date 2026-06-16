@@ -8,7 +8,7 @@ import { resolve } from "path";
 // Build: npx vite build --config vite.candy.config.js  ->  dist-candy/
 export default defineConfig({
   plugins: [react()],
-  server: { port: 5174, open: "/candy.html" },
+  server: { host: true, port: 5174, open: "/candy.html" },
   build: {
     outDir: "dist-candy",
     rollupOptions: {
