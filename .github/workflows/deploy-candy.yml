@@ -27,6 +27,8 @@ jobs:
           node-version: 20
       - run: npm ci
       - run: npx vite build --config vite.candy.config.js
+      # Faz a raiz do site abrir direto (sem precisar de /candy.html)
+      - run: cp dist-candy/candy.html dist-candy/index.html
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
         with:
