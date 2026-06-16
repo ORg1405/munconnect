@@ -1,0 +1,43 @@
+name: Deploy Doce Mel (candy site) to GitHub Pages
+
+# Publica o site de balas (dist-candy) no GitHub Pages.
+# É independente do MUNConnect — só faz o build do site de balas.
+on:
+  push:
+    branches:
+      - claude/candy-sales-site-animations-ytnegm
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-candy
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+      - run: npx vite build --config vite.candy.config.js
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist-candy
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
