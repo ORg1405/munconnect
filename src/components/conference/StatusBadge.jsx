@@ -1,4 +1,4 @@
-import { STATUS } from "../../data/mockConference";
+import { STATUS } from "../../data/conferenceModel";
 
 /** Selo de status de um subitem da agenda (verde / amarelo* / cinza). */
 export default function StatusBadge({ status }) {

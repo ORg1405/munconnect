@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { doc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebase";
-import { MOCK_CONFERENCE } from "../data/mockConference";
+import { DEFAULT_CONFERENCE_ID } from "../data/firestore";
 
 const IS_ADMIN = true;
 
@@ -72,9 +72,9 @@ export default function EventModal({ event, onClose }) {
         )}
 
         {/* Protótipo: por enquanto toda conferência abre a simulação mockada.
-            Com o Firestore, trocar MOCK_CONFERENCE.id por event.id. */}
+            Com o Firestore, trocar DEFAULT_CONFERENCE_ID por event.id. */}
         <button
-          onClick={() => navigate(`/conference/${MOCK_CONFERENCE.id}`)}
+          onClick={() => navigate(`/conference/${DEFAULT_CONFERENCE_ID}`)}
           style={committeesBtnStyle}
         >
           Ver comitês

@@ -20,11 +20,22 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Landing />} />
           <Route path="/login" element={<LoginPage />} />
-          {/* Protótipo da simulação (dados mockados, sem auth) */}
-          <Route path="/conference/:conferenceId" element={<ConferencePage />} />
+          {/* Simulação (Firestore real-time) — só acessível logado */}
+          <Route
+            path="/conference/:conferenceId"
+            element={
+              <ProtectedRoute>
+                <ConferencePage />
+              </ProtectedRoute>
+            }
+          />
           <Route
             path="/conference/:conferenceId/committee/:committeeId"
-            element={<CommitteePage />}
+            element={
+              <ProtectedRoute>
+                <CommitteePage />
+              </ProtectedRoute>
+            }
           />
           <Route
             path="/app/*"

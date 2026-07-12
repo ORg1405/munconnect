@@ -5,13 +5,24 @@ import { useNavigate } from "react-router-dom";
 
 const tabs = [
   {
-    id: "calendar",
-    label: "Calendário",
+    id: "home",
+    label: "Início",
     icon: (
       <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
-        <rect x="1" y="2" width="12" height="11" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M1 5.5h12" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M4.5 1v2M9.5 1v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+        <path d="M2 6l5-4 5 4v6a1 1 0 01-1 1H3a1 1 0 01-1-1V6z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
+        <path d="M5.5 13V8.5h3V13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    ),
+  },
+  {
+    id: "comites",
+    label: "Comitês",
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+        <rect x="1.5" y="1.5" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+        <rect x="8" y="1.5" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+        <rect x="1.5" y="8" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+        <rect x="8" y="8" width="4.5" height="4.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
       </svg>
     ),
   },
@@ -59,15 +70,21 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
     <aside style={{
       width: 210,
       minWidth: 210,
-      background: "#f3f2ef",
-      borderRight: "0.5px solid #e0ddd6",
+      background: "var(--bg-overlay)",
+      borderRight: "1px solid var(--border)",
       display: "flex",
       flexDirection: "column",
       padding: "20px 0",
     }}>
-      <div style={{ padding: "0 16px 20px", borderBottom: "0.5px solid #e0ddd6", marginBottom: 12 }}>
-        <div style={{ fontSize: 15, fontWeight: 600, color: "#1a1a1a" }}>MUNConnect</div>
-        <div style={{ fontSize: 11, color: "#888", marginTop: 2 }}>Belo Horizonte</div>
+      <div style={{
+        padding: "0 16px 18px",
+        borderBottom: "1px solid var(--border)",
+        marginBottom: 10,
+      }}>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "var(--text-primary)", letterSpacing: "-0.01em" }}>
+          MUNConnect
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>Belo Horizonte</div>
       </div>
 
       {tabs.map((tab) => {
@@ -76,6 +93,7 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
+            className="sidebar-tab"
             style={{
               display: "flex",
               alignItems: "center",
@@ -83,11 +101,11 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
               padding: "9px 16px",
               fontSize: 13,
               cursor: "pointer",
-              background: isActive ? "#ffffff" : "transparent",
-              color: isActive ? "#1a1a1a" : "#555",
-              fontWeight: isActive ? 500 : 400,
+              background: isActive ? "hsl(205 68% 58% / 0.1)" : "transparent",
+              color: isActive ? "var(--brand-400)" : "var(--text-secondary)",
+              fontWeight: isActive ? 600 : 400,
               border: "none",
-              borderRight: isActive ? "2px solid #1D9E75" : "2px solid transparent",
+              borderRight: isActive ? "2px solid var(--brand-400)" : "2px solid transparent",
               textAlign: "left",
               width: "100%",
             }}
@@ -95,7 +113,13 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
             <span style={{ display: "flex", alignItems: "center" }}>{tab.icon}</span>
             <span style={{ flex: 1 }}>{tab.label}</span>
             {tab.soon && (
-              <span style={{ fontSize: 10, background: "#e8e6e0", color: "#888", padding: "1px 6px", borderRadius: 8 }}>
+              <span style={{
+                fontSize: 10,
+                background: "hsl(210 20% 18%)",
+                color: "var(--text-muted)",
+                padding: "1px 6px",
+                borderRadius: 8,
+              }}>
                 em breve
               </span>
             )}
@@ -105,7 +129,12 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
 
       {isAdmin && (
         <>
-          <div style={{ margin: "12px 16px 6px", fontSize: 10, color: "#aaa", fontWeight: 500, letterSpacing: "0.05em", textTransform: "uppercase" }}>
+          <div style={{
+            margin: "12px 16px 6px",
+            fontSize: 10, color: "var(--text-muted)",
+            fontWeight: 600, letterSpacing: "0.06em",
+            textTransform: "uppercase",
+          }}>
             Admin
           </div>
           {adminTabs.map((tab) => {
@@ -121,13 +150,14 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
                   padding: "9px 16px",
                   fontSize: 13,
                   cursor: "pointer",
-                  background: isActive ? "#ffffff" : "transparent",
-                  color: isActive ? "#cc6600" : "#886633",
-                  fontWeight: isActive ? 500 : 400,
+                  background: isActive ? "hsl(38 92% 65% / 0.1)" : "transparent",
+                  color: isActive ? "var(--accent-400)" : "hsl(38 60% 60%)",
+                  fontWeight: isActive ? 600 : 400,
                   border: "none",
-                  borderRight: isActive ? "2px solid #cc6600" : "2px solid transparent",
+                  borderRight: isActive ? "2px solid var(--accent-400)" : "2px solid transparent",
                   textAlign: "left",
                   width: "100%",
+                  transition: "background 0.12s, color 0.12s",
                 }}
               >
                 <span style={{ display: "flex", alignItems: "center" }}>{tab.icon}</span>
@@ -139,12 +169,25 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
       )}
 
       {/* Usuário logado + logout */}
-      <div style={{ marginTop: "auto", padding: "12px 16px", borderTop: "0.5px solid #e0ddd6" }}>
-        <div style={{ fontSize: 11, color: "#888", marginBottom: 6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+      <div style={{
+        marginTop: "auto",
+        padding: "12px 16px",
+        borderTop: "1px solid var(--border)",
+      }}>
+        <div style={{
+          fontSize: 11, color: "var(--text-muted)", marginBottom: 6,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
           {user?.email}
         </div>
         {isAdmin && (
-          <span style={{ fontSize: 10, background: "#E1F5EE", color: "#0F6E56", padding: "1px 7px", borderRadius: 8, display: "inline-block", marginBottom: 8 }}>
+          <span style={{
+            fontSize: 10,
+            background: "hsl(160 55% 24%)",
+            color: "hsl(160 65% 60%)",
+            padding: "1px 7px", borderRadius: 8,
+            display: "inline-block", marginBottom: 8,
+          }}>
             admin
           </span>
         )}
@@ -154,11 +197,12 @@ export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
             width: "100%",
             padding: "6px 0",
             fontSize: 12,
-            border: "0.5px solid #ddd",
+            border: "1px solid var(--border-strong)",
             borderRadius: 6,
-            background: "#fff",
+            background: "transparent",
             cursor: "pointer",
-            color: "#888",
+            color: "var(--text-muted)",
+            transition: "color 0.12s, border-color 0.12s",
           }}
         >
           Sair

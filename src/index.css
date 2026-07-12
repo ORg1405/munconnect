@@ -103,3 +103,111 @@
   color: #7B61FF;
   font-weight: 700;
 }
+
+/* ── App micro-interactions & animations ─────────────────────────────────── */
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes pulse-ring {
+  0%, 100% { box-shadow: 0 0 0 0   hsl(205 68% 58% / 0.55); }
+  50%       { box-shadow: 0 0 0 6px hsl(205 68% 58% / 0); }
+}
+@keyframes shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position:  200% 0; }
+}
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+/* Utility: entry animations */
+.anim-fade-up { animation: fadeInUp 0.28s var(--ease-out-expo) both; }
+.anim-fade    { animation: fadeIn   0.18s ease both; }
+
+/* Calendar grid fades in on month change (key prop re-triggers) */
+.cal-grid { animation: fadeInUp 0.22s var(--ease-out-expo) both; }
+
+/* Skeleton loading shimmer */
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--bg-overlay) 25%,
+    hsl(210 34% 14% / 1) 50%,
+    var(--bg-overlay) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s infinite linear;
+  border-radius: 6px;
+}
+
+/* Card hover glow (works on elements without inline box-shadow) */
+.card-glow {
+  transition: box-shadow 0.25s ease, border-color 0.25s ease !important;
+}
+.card-glow:hover {
+  box-shadow: 0 0 32px hsl(199 92% 58% / 0.1), 0 0 0 1px var(--border-strong) !important;
+  border-color: var(--border-strong) !important;
+}
+
+/* Nav button hover */
+.nav-btn:hover {
+  color: var(--text-primary) !important;
+  background: var(--bg-elevated) !important;
+}
+
+/* Region filter chip hover: lift + no layout shift */
+.region-chip {
+  transition: transform 0.15s ease, background 0.15s ease,
+              color 0.15s ease, border-color 0.15s ease !important;
+}
+.region-chip:hover { transform: translateY(-2px); }
+
+/* Event day cell: pill brightens on hover */
+.ev-cell:hover .ev-pill-bg { filter: brightness(1.18); }
+.ev-pill-bg { transition: filter 0.12s ease, opacity 0.2s ease; }
+
+/* Today pulsing ring */
+.today-pulse {
+  animation: pulse-ring 2.8s ease-in-out infinite;
+  border-radius: 50%;
+}
+
+/* Upcoming conference rows */
+.upcoming-row {
+  transition: background 0.12s ease, border-color 0.12s ease !important;
+}
+.upcoming-row:hover {
+  background: hsl(205 68% 58% / 0.06) !important;
+}
+
+/* Sidebar tabs */
+.sidebar-tab:hover {
+  background: hsl(205 68% 58% / 0.06) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Home: quick-access cards */
+.qcard { transition: transform 0.15s ease, box-shadow 0.25s ease, border-color 0.25s ease !important; }
+.qcard:hover { transform: translateY(-2px); }
+.qcard-arrow { transition: color 0.15s ease, transform 0.15s ease; }
+.qcard:hover .qcard-arrow { color: var(--brand-400); transform: translateX(3px); }
+
+/* Modal entry */
+.modal-overlay { animation: fadeIn   0.15s ease         both; }
+.modal-content { animation: fadeInUp 0.22s var(--ease-out-expo) both; }
+
+/* Panels slide in from right */
+.panel-slide { animation: slide-in-right 0.28s var(--ease-out-expo) both; }
+.panel-slide:nth-child(2) { animation-delay: 0.06s; }
+
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade-up, .anim-fade, .cal-grid, .modal-overlay,
+  .modal-content, .panel-slide, .today-pulse { animation: none !important; }
+}

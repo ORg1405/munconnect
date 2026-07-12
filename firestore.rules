@@ -1,0 +1,99 @@
+rules_version = '2';
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Firestore Security Rules — MUNConnect
+//
+// Hierarquia (ver src/data/firestore.js):
+//   conferences/{conferenceId}
+//     committees/{committeeId}
+//       topics/{topicId}
+//         subitems/{subitemId}    { status, ... }
+//       documents/{docId}
+//       members/{uid}             { role: "director" | "delegate" }
+//
+// Princípios:
+//   • Leitura liberada para qualquer usuário autenticado em toda a árvore.
+//   • members NÃO é gravável pelo client (só via console / Admin SDK).
+//   • Membros do comitê podem criar documents.
+//   • Só directors podem alterar o status de subitems.
+//   • Default deny para qualquer escrita não coberta explicitamente.
+// ─────────────────────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Existe doc em members/{uid} → usuário é membro do comitê.
+    function isMember(conferenceId, committeeId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/conferences/$(conferenceId)/committees/$(committeeId)/members/$(request.auth.uid));
+    }
+
+    // Papel do usuário no comitê (null se não for membro).
+    function memberRole(conferenceId, committeeId) {
+      return get(/databases/$(database)/documents/conferences/$(conferenceId)/committees/$(committeeId)/members/$(request.auth.uid)).data.role;
+    }
+
+    function isDirector(conferenceId, committeeId) {
+      return isMember(conferenceId, committeeId) &&
+        memberRole(conferenceId, committeeId) == 'director';
+    }
+
+    // Somente o campo `status` mudou (nenhum outro campo foi afetado).
+    function onlyStatusChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
+    }
+
+    // ── Conferences ──────────────────────────────────────────────────────────
+    match /conferences/{conferenceId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+
+      // ── Committees ─────────────────────────────────────────────────────────
+      match /committees/{committeeId} {
+        allow read: if isSignedIn();
+        allow write: if false;
+
+        // ── Members ──────────────────────────────────────────────────────────
+        // Leitura livre (autenticado); escrita apenas manual (console/Admin SDK).
+        match /members/{uid} {
+          allow read: if isSignedIn();
+          allow write: if false;
+        }
+
+        // ── Documents ────────────────────────────────────────────────────────
+        // Qualquer membro do comitê pode criar. Sem update/delete client-side.
+        match /documents/{docId} {
+          allow read: if isSignedIn();
+          allow create: if isMember(conferenceId, committeeId);
+          allow update, delete: if false;
+        }
+
+        // ── Topics ───────────────────────────────────────────────────────────
+        match /topics/{topicId} {
+          allow read: if isSignedIn();
+          allow write: if false;
+
+          // ── Subitems ───────────────────────────────────────────────────────
+          // Só directors podem alterar o status — e nada além do status.
+          match /subitems/{subitemId} {
+            allow read: if isSignedIn();
+            allow update: if isDirector(conferenceId, committeeId) &&
+                             onlyStatusChanged();
+            allow create, delete: if false;
+          }
+        }
+      }
+    }
+
+    // ── Default deny ───────────────────────────────────────────────────────────
+    // Qualquer caminho não coberto acima: sem leitura e sem escrita.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

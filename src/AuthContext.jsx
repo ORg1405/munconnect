@@ -1,6 +1,12 @@
 import { createContext, useContext, useEffect, useState } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import {
+  onAuthStateChanged,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  updateProfile,
+} from "firebase/auth";
+import { doc, getDoc, setDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "./firebase";
 
 const AuthContext = createContext(null);
@@ -26,8 +32,31 @@ export function AuthProvider({ children }) {
     return () => unsub();
   }, []);
 
+  // Login com email/senha.
+  const login = (email, password) =>
+    signInWithEmailAndPassword(auth, email, password);
+
+  // Cadastro: cria o usuário no Auth e o doc users/{uid} no Firestore.
+  const signup = async (email, password, displayName) => {
+    const cred = await createUserWithEmailAndPassword(auth, email, password);
+    const name = (displayName || "").trim();
+    if (name) {
+      await updateProfile(cred.user, { displayName: name });
+    }
+    await setDoc(doc(db, "users", cred.user.uid), {
+      displayName: name,
+      email: cred.user.email,
+      createdAt: serverTimestamp(),
+    });
+    return cred;
+  };
+
+  const logout = () => signOut(auth);
+
   return (
-    <AuthContext.Provider value={{ user, isAdmin, loading }}>
+    <AuthContext.Provider
+      value={{ user, isAdmin, loading, login, signup, logout }}
+    >
       {!loading && children}
     </AuthContext.Provider>
   );

@@ -11,10 +11,24 @@ const COLORS = [
   { id: "gray",   bg: "#F1EFE8", text: "#444441", border: "#888780", label: "Cinza" },
 ];
 
+// Dark-mode preview pill colors matching Calendar.jsx EVENT_PILL
+const PREVIEW_DARK = {
+  green:  { pill: "hsl(160 55% 24%)", text: "#d4fced" },
+  blue:   { pill: "hsl(207 65% 26%)", text: "#d6edfb" },
+  red:    { pill: "hsl(0 58% 28%)",   text: "#fbd6d6" },
+  purple: { pill: "hsl(250 48% 30%)", text: "#e8e6fc" },
+  amber:  { pill: "hsl(35 72% 28%)",  text: "#faecd4" },
+  pink:   { pill: "hsl(330 50% 28%)", text: "#fad4e3" },
+  teal:   { pill: "hsl(175 52% 23%)", text: "#ccf5eb" },
+  gray:   { pill: "hsl(220 12% 24%)", text: "#e8e7e6" },
+};
+
 export { COLORS };
 
 export default function AddEventModal({ onSave, onClose }) {
-  const [form, setForm] = useState({ name: "", dateStart: "", dateEnd: "", local: "", desc: "", color: "green" });
+  const [form, setForm] = useState({
+    name: "", dateStart: "", dateEnd: "", local: "", desc: "", color: "blue", region: "",
+  });
   const [saving, setSaving] = useState(false);
 
   function set(field, value) {
@@ -28,12 +42,17 @@ export default function AddEventModal({ onSave, onClose }) {
     setSaving(false);
   }
 
-  const selectedColor = COLORS.find((c) => c.id === form.color) || COLORS[0];
+  const preview = PREVIEW_DARK[form.color] ?? PREVIEW_DARK.blue;
+  const isValid = form.name.trim() && form.dateStart && form.dateEnd;
 
   return (
-    <div style={overlayStyle} onClick={onClose}>
-      <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
-        <h2 style={{ fontSize: 15, fontWeight: 600, margin: "0 0 14px", color: "#1a1a1a" }}>
+    <div className="modal-overlay" style={overlayStyle} onClick={onClose}>
+      <div className="modal-content" style={modalStyle} onClick={(e) => e.stopPropagation()}>
+
+        <h2 style={{
+          fontSize: 15, fontWeight: 700, margin: "0 0 16px",
+          color: "var(--text-primary)", letterSpacing: "-0.01em",
+        }}>
           Nova conferência
         </h2>
 
@@ -44,9 +63,9 @@ export default function AddEventModal({ onSave, onClose }) {
             onChange={(e) => set("name", e.target.value)}
             style={inputStyle}
           />
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Data de início *</p>
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Início *</p>
               <input
                 type="date"
                 value={form.dateStart}
@@ -55,7 +74,7 @@ export default function AddEventModal({ onSave, onClose }) {
               />
             </div>
             <div style={{ flex: 1 }}>
-              <p style={{ fontSize: 11, color: "#888", marginBottom: 4 }}>Data de fim *</p>
+              <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 4 }}>Fim *</p>
               <input
                 type="date"
                 value={form.dateEnd}
@@ -78,73 +97,81 @@ export default function AddEventModal({ onSave, onClose }) {
             rows={3}
             style={{ ...inputStyle, resize: "vertical" }}
           />
+          <select
+            value={form.region}
+            onChange={(e) => set("region", e.target.value)}
+            style={inputStyle}
+          >
+            <option value="">Região (opcional)</option>
+            <option value="LATAM">LATAM</option>
+            <option value="EUA">EUA</option>
+            <option value="Europa">Europa</option>
+          </select>
         </div>
 
         {/* Paleta de cores */}
-        <div style={{ marginTop: 14 }}>
-          <p style={{ fontSize: 12, color: "#888", marginBottom: 8 }}>Cor de destaque</p>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+        <div style={{ marginTop: 16 }}>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8, letterSpacing: "0.06em", textTransform: "uppercase" }}>
+            Cor de destaque
+          </p>
+          <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
             {COLORS.map((c) => (
               <button
                 key={c.id}
                 title={c.label}
                 onClick={() => set("color", c.id)}
                 style={{
-                  width: 24,
-                  height: 24,
-                  borderRadius: "50%",
-                  background: c.border,
-                  border: form.color === c.id ? "3px solid #1a1a1a" : "3px solid transparent",
-                  cursor: "pointer",
-                  padding: 0,
+                  width: 22, height: 22, borderRadius: "50%",
+                  background: c.border, padding: 0, cursor: "pointer",
+                  border: form.color === c.id
+                    ? "2px solid var(--text-primary)"
+                    : "2px solid transparent",
+                  outline: form.color === c.id ? `2px solid ${c.border}55` : "none",
+                  outlineOffset: 2,
+                  transition: "border-color 0.12s, outline 0.12s",
                 }}
               />
             ))}
           </div>
         </div>
 
-        {/* Preview */}
+        {/* Preview — dark mode */}
         <div style={{ marginTop: 14 }}>
-          <p style={{ fontSize: 12, color: "#888", marginBottom: 6 }}>Prévia no calendário {form.dateStart && form.dateEnd ? `(${form.dateStart.split('-').reverse().join('/')} a ${form.dateEnd.split('-').reverse().join('/')})` : ""}</p>
+          <p style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>
+            Prévia{form.dateStart && form.dateEnd
+              ? ` (${form.dateStart.split("-").reverse().join("/")} a ${form.dateEnd.split("-").reverse().join("/")})`
+              : ""}
+          </p>
           <div style={{
-            background: "#f9f9f8",
-            border: "0.5px solid #e0ddd6",
+            background: "var(--bg-base)",
+            border: "1px solid var(--border)",
             borderRadius: 8,
-            padding: "10px 12px",
-            display: "flex",
-            alignItems: "center",
-            gap: 10,
+            padding: "10px 14px",
+            display: "flex", alignItems: "center", gap: 10,
           }}>
             <div style={{
-              fontSize: 10,
-              padding: "3px 8px",
-              borderRadius: 4,
-              background: selectedColor.bg,
-              color: selectedColor.text,
-              border: `1px solid ${selectedColor.border}`,
-              fontWeight: 500,
-              maxWidth: 160,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              fontSize: 11, fontWeight: 700,
+              padding: "4px 10px",
+              borderRadius: 6,
+              background: preview.pill,
+              color: preview.text,
+              maxWidth: 180,
+              overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
             }}>
               {form.name || "Nome da conferência"}
             </div>
-            <span style={{ fontSize: 11, color: "#aaa" }}>← como aparece no calendário</span>
+            <span style={{ fontSize: 10, color: "var(--text-muted)" }}>← prévia no calendário</span>
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
           <button onClick={onClose} style={cancelBtnStyle}>Cancelar</button>
           <button
             onClick={handleSave}
-            disabled={saving || !form.name.trim() || !form.dateStart || !form.dateEnd}
-            style={{
-              ...saveBtnStyle,
-              opacity: saving || !form.name.trim() || !form.dateStart || !form.dateEnd ? 0.6 : 1,
-            }}
+            disabled={saving || !isValid}
+            style={{ ...saveBtnStyle, opacity: saving || !isValid ? 0.55 : 1 }}
           >
-            {saving ? "Salvando..." : "Salvar"}
+            {saving ? "Salvando…" : "Salvar"}
           </button>
         </div>
       </div>
@@ -152,42 +179,54 @@ export default function AddEventModal({ onSave, onClose }) {
   );
 }
 
+// ── Styles ───────────────────────────────────────────────────────────────────
 const overlayStyle = {
   position: "fixed", inset: 0,
-  background: "rgba(0,0,0,0.3)",
+  background: "hsl(210 42% 5% / 0.75)",
+  backdropFilter: "blur(4px)",
   display: "flex", alignItems: "center", justifyContent: "center",
   zIndex: 100,
 };
 
 const modalStyle = {
-  background: "#fff",
-  border: "0.5px solid #ddd",
-  borderRadius: 12,
+  background: "var(--bg-overlay)",
+  border: "1px solid var(--border-strong)",
+  borderRadius: "var(--radius-dialog)",
+  boxShadow: "0 24px 64px hsl(210 42% 2% / 0.6), var(--ring-soft)",
   padding: 20,
-  width: 360,
-  maxWidth: "90vw",
+  width: 380,
+  maxWidth: "92vw",
+  fontFamily: "var(--font-ui)",
+  maxHeight: "90dvh",
+  overflowY: "auto",
 };
 
 const inputStyle = {
-  padding: "7px 10px",
+  padding: "8px 10px",
   fontSize: 13,
-  border: "0.5px solid #ddd",
-  borderRadius: 6,
+  border: "1px solid var(--border-strong)",
+  borderRadius: 7,
   outline: "none",
   width: "100%",
-  fontFamily: "system-ui, sans-serif",
-  color: "#1a1a1a",
+  fontFamily: "var(--font-ui)",
+  color: "var(--text-primary)",
+  background: "var(--bg-base)",
+  transition: "border-color 0.15s",
+  boxSizing: "border-box",
 };
 
 const cancelBtnStyle = {
-  flex: 1, padding: "7px 0", fontSize: 13,
-  border: "0.5px solid #ddd", borderRadius: 6,
-  background: "#fff", cursor: "pointer", color: "#555",
+  flex: 1, padding: "8px 0", fontSize: 13,
+  border: "1px solid var(--border-strong)", borderRadius: "var(--radius-btn)",
+  background: "transparent", cursor: "pointer",
+  color: "var(--text-secondary)",
+  transition: "border-color 0.15s",
 };
 
 const saveBtnStyle = {
-  flex: 1, padding: "7px 0", fontSize: 13,
-  background: "#1D9E75", color: "#fff",
-  border: "none", borderRadius: 6,
-  cursor: "pointer", fontWeight: 500,
+  flex: 1, padding: "8px 0", fontSize: 13,
+  background: "var(--brand-500)", color: "#fff",
+  border: "none", borderRadius: "var(--radius-btn)",
+  cursor: "pointer", fontWeight: 600,
+  transition: "opacity 0.15s",
 };

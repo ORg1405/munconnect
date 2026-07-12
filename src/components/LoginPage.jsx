@@ -1,27 +1,40 @@
 import { useState } from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
 import { useNavigate, Link } from "react-router-dom";
-import { auth } from "../firebase";
+import { useAuth } from "../AuthContext";
 
 export default function LoginPage() {
+  const [mode, setMode] = useState("login"); // "login" | "signup"
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { login, signup } = useAuth();
+
+  const isSignup = mode === "signup";
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
-      await signInWithEmailAndPassword(auth, email, password);
-      navigate("/app");
-    } catch {
-      setError("Email ou senha incorretos.");
+      if (isSignup) {
+        await signup(email, password, displayName);
+      } else {
+        await login(email, password);
+      }
+      navigate("/app"); // redireciona para a home depois de logar
+    } catch (err) {
+      setError(messageFor(err, isSignup));
     } finally {
       setLoading(false);
     }
+  };
+
+  const toggleMode = () => {
+    setError("");
+    setMode(isSignup ? "login" : "signup");
   };
 
   const inputStyle = {
@@ -65,16 +78,28 @@ export default function LoginPage() {
             MUNConnect
           </div>
           <div style={{ fontSize: "0.8rem", color: "hsl(220 8% 50%)", marginTop: 4 }}>
-            Entre na sua conta
+            {isSignup ? "Crie sua conta" : "Entre na sua conta"}
           </div>
         </div>
 
+        {isSignup && (
+          <input
+            type="text"
+            placeholder="Nome"
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            required
+            autoComplete="name"
+            style={inputStyle}
+          />
+        )}
         <input
           type="email"
           placeholder="Email"
           value={email}
           onChange={e => setEmail(e.target.value)}
           required
+          autoComplete="email"
           style={inputStyle}
         />
         <input
@@ -83,6 +108,8 @@ export default function LoginPage() {
           value={password}
           onChange={e => setPassword(e.target.value)}
           required
+          autoComplete={isSignup ? "new-password" : "current-password"}
+          minLength={6}
           style={inputStyle}
         />
 
@@ -106,7 +133,25 @@ export default function LoginPage() {
             marginTop: 2,
           }}
         >
-          {loading ? "Entrando…" : "Entrar"}
+          {loading
+            ? (isSignup ? "Criando…" : "Entrando…")
+            : (isSignup ? "Criar conta" : "Entrar")}
+        </button>
+
+        <button
+          type="button"
+          onClick={toggleMode}
+          style={{
+            background: "none",
+            border: "none",
+            textAlign: "center",
+            fontSize: "0.75rem",
+            color: "hsl(199 85% 60%)",
+            cursor: "pointer",
+            marginTop: 2,
+          }}
+        >
+          {isSignup ? "Já tem conta? Entrar" : "Não tem conta? Criar conta"}
         </button>
 
         <Link
@@ -124,4 +169,23 @@ export default function LoginPage() {
       </form>
     </div>
   );
+}
+
+function messageFor(err, isSignup) {
+  switch (err?.code) {
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "Email ou senha incorretos.";
+    case "auth/email-already-in-use":
+      return "Este email já está cadastrado.";
+    case "auth/weak-password":
+      return "A senha precisa de pelo menos 6 caracteres.";
+    case "auth/invalid-email":
+      return "Email inválido.";
+    default:
+      return isSignup
+        ? "Não foi possível criar a conta. Tente novamente."
+        : "Não foi possível entrar. Tente novamente.";
+  }
 }
