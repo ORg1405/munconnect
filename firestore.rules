@@ -9,13 +9,28 @@ rules_version = '2';
 //       topics/{topicId}
 //         subitems/{subitemId}    { status, ... }
 //       documents/{docId}
-//       members/{uid}             { role: "director" | "delegate" }
+//       members/{uid}             { role: "director" | "delegate", nome, pais, rfidUid }
+//       attendance/{autoId}       { memberId, nome, pais, timestamp, status }
+//   devices/{deviceId}            { pendingPairing }                             (raiz)
+//   rfidTags/{rfidUid}            { conferenceId, committeeId, memberId, pairedAt } (raiz)
+//
+// Credenciamento RFID: os 3 totens são fixos e genéricos (qualquer delegado de
+// qualquer comitê usa qualquer totem). rfidTags é a fonte da verdade global
+// "qual delegado é esta tag"; devices só identifica o aparelho físico durante o
+// pareamento.
 //
 // Princípios:
 //   • Leitura liberada para qualquer usuário autenticado em toda a árvore.
-//   • members NÃO é gravável pelo client (só via console / Admin SDK).
+//   • members quase imutável pelo client: só o diretor pode gravar rfidUid
+//     (pareamento de crachá); nome/pais/role continuam só console / Admin SDK.
 //   • Membros do comitê podem criar documents.
 //   • Só directors podem alterar o status de subitems.
+//   • attendance e devices são escritos SOMENTE pela Cloud Function de check-in
+//     (Admin SDK, que ignora estas rules). O diretor só LÊ (painel de presença
+//     e a pendência de pareamento do totem selecionado).
+//   • rfidTags: o diretor cria/reatribui a tag do PRÓPRIO comitê pelo painel;
+//     reatribuir uma tag de outro comitê exige ser diretor dos dois (dono antigo
+//     e novo). Leitura fechada ao client (só a Cloud Function lê, via Admin SDK).
 //   • Default deny para qualquer escrita não coberta explicitamente.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -62,6 +77,11 @@ service cloud.firestore {
       return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status']);
     }
 
+    // Somente o campo `rfidUid` mudou — pareamento de crachá pelo diretor.
+    function onlyRfidUidChanged() {
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['rfidUid']);
+    }
+
     // ── Conferences ──────────────────────────────────────────────────────────
     match /conferences/{conferenceId} {
       allow read: if isSignedIn();
@@ -75,12 +95,22 @@ service cloud.firestore {
         allow create, update, delete: if isAdmin();
 
         // ── Members ──────────────────────────────────────────────────────────
-        // Leitura livre; create/update só manual (console/Admin SDK). Admin
-        // pode deletar (limpeza em cascata ao excluir o comitê).
+        // Leitura livre; create só manual (console/Admin SDK). Update só do
+        // diretor e SÓ no campo rfidUid (pareamento de crachá) — nome/pais/role
+        // seguem imutáveis pelo client. Admin pode deletar (cascata).
         match /members/{uid} {
           allow read: if isSignedIn();
-          allow create, update: if false;
+          allow create: if false;
+          allow update: if isDirector(conferenceId, committeeId) && onlyRfidUidChanged();
           allow delete: if isAdmin();
+        }
+
+        // ── Attendance (presença) ────────────────────────────────────────────
+        // Registros de check-in do totem: escritos SÓ pela Cloud Function (Admin
+        // SDK). Client nunca escreve; só o diretor lê (painel de presença).
+        match /attendance/{attId} {
+          allow read: if isDirector(conferenceId, committeeId);
+          allow write: if false;
         }
 
         // ── Documents ────────────────────────────────────────────────────────
@@ -110,6 +140,34 @@ service cloud.firestore {
           }
         }
       }
+    }
+
+    // ── Devices (totens de credenciamento) ──────────────────────────────────────
+    // Coleção raiz. Totens genéricos (sem dono): o doc só guarda pendingPairing,
+    // a pendência de pareamento gravada pelo ESP32 via Cloud Function. Como
+    // qualquer diretor pode usar qualquer totem e o doc não carrega comitê, a
+    // leitura fica liberada a qualquer autenticado (o payload é só um UID de tag,
+    // baixa sensibilidade; a tela de pareamento é gated por isDirector na UI).
+    // Escrita é SÓ da Cloud Function (Admin SDK ignora estas rules).
+    match /devices/{deviceId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // ── rfidTags (fonte da verdade global tag → delegado) ────────────────────────
+    // Coleção raiz. O diretor cria a tag do próprio comitê pelo painel; reatribuir
+    // uma tag existente exige ser diretor tanto do comitê NOVO (request) quanto do
+    // ATUAL dono (resource) — impede roubo de tag entre comitês. delete e leitura
+    // fechados ao client; só a Cloud Function lê (Admin SDK) para rotear check-ins.
+    match /rfidTags/{rfidUid} {
+      allow read: if false;
+      allow create: if isDirector(request.resource.data.conferenceId,
+                                  request.resource.data.committeeId);
+      allow update: if isDirector(request.resource.data.conferenceId,
+                                  request.resource.data.committeeId) &&
+                       isDirector(resource.data.conferenceId,
+                                  resource.data.committeeId);
+      allow delete: if false;
     }
 
     // ── Default deny ───────────────────────────────────────────────────────────

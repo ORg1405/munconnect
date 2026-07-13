@@ -10,11 +10,30 @@
 //         subitems/{subitemId}                 { label, status, committeeId, ordem? }
 //       documents/{docId}                      { titulo, autor, autorUid, url (link colado),
 //                                                 topicId?, tipo: "working" | "final", createdAt }
-//       members/{uid}                          { role: "director" | "delegate" }
+//       members/{uid}                          { role: "director" | "delegate",
+//                                                 nome, pais, rfidUid }
+//       attendance/{autoId}                    { memberId, nome, pais, rfidUid,
+//                                                 timestamp, status: "present" }
 //
 // Os subitems são lidos por tópico (topics/{topicId}/subitems) — sem query
 // collectionGroup, para não depender de índice de collection group. O campo
 // committeeId nos subitems é legado (do listener antigo) e hoje é dispensável.
+//
+// Credenciamento por crachá RFID/NFC (3 totens ESP32 + RC522, FIXOS e GENÉRICOS —
+// qualquer delegado de qualquer comitê usa qualquer totem):
+//   • members/{uid}.rfidUid — UID da tag física pareada ao membro (string) ou
+//     null enquanto não pareado. nome/pais identificam o membro nas telas de
+//     credenciamento e presença (preenchidos no console, como role).
+//   • rfidTags/{rfidUid} (coleção RAIZ) — fonte da verdade global "qual delegado
+//     é esta tag": { conferenceId, committeeId, memberId, pairedAt }. Gravado
+//     pelo diretor no pareamento (ver pairMemberBadge) e lido só pela Cloud
+//     Function de check-in (Admin SDK) para rotear a presença em O(1), sem query.
+//   • devices/{deviceId} (coleção RAIZ) — só identifica o totem físico:
+//       { pendingPairing: { rfidUid, timestamp } | null }
+//     Escrito SOMENTE pela Cloud Function (Admin SDK); o client nunca escreve. O
+//     diretor lê pendingPairing do totem que selecionou (ver subscribeDevicePairing).
+//   • attendance é escrito SOMENTE pela Cloud Function (Admin SDK) a cada
+//     check-in; o client nunca escreve, só lê (diretor).
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
@@ -27,7 +46,7 @@ import {
   updateDoc,
   writeBatch,
 } from "firebase/firestore";
-import { db } from "../firebase";
+import { auth, db } from "../firebase";
 
 // Remove chaves com valor undefined (addDoc/updateDoc rejeitam undefined; "" e
 // null são aceitos e usados para campos opcionais em branco).
@@ -44,6 +63,15 @@ export const DEFAULT_CONFERENCE_ID = "diplomun-2026";
 const byOrdem = (a, b) =>
   (a.ordem ?? Infinity) - (b.ordem ?? Infinity) ||
   String(a.id).localeCompare(String(b.id));
+
+// Milissegundos de um Firestore Timestamp (aceita a forma serializada { seconds }
+// que aparece antes do serverTimestamp resolver). Usado para ordenar por data.
+function toMillis(ts) {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === "function") return ts.toMillis();
+  if (typeof ts.seconds === "number") return ts.seconds * 1000;
+  return 0;
+}
 
 // ── Conference ────────────────────────────────────────────────────────────────
 
@@ -374,6 +402,147 @@ export function subscribeMemberRole(conferenceId, committeeId, uid, cb) {
   return onSnapshot(ref, (snap) => {
     cb(snap.exists() ? snap.data().role ?? null : null);
   });
+}
+
+// ── Credenciamento por crachá (diretor) ───────────────────────────────────────
+
+// Todos os membros do comitê (para a tela de pareamento e o painel de presença).
+// Cada membro: { id: uid, role, nome, pais, rfidUid }. Ordena por nome para uma
+// lista estável. Só o diretor usa isso na UI; as rules liberam leitura a membros.
+export function subscribeMembers(conferenceId, committeeId, cb) {
+  const col = collection(
+    db,
+    "conferences",
+    conferenceId,
+    "committees",
+    committeeId,
+    "members"
+  );
+  return onSnapshot(
+    col,
+    (snap) => {
+      cb(
+        snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) =>
+            String(a.nome ?? a.id).localeCompare(String(b.nome ?? b.id), "pt-BR")
+          )
+      );
+    },
+    (err) => {
+      console.error("[subscribeMembers]:", err.code || err);
+      cb([]);
+    }
+  );
+}
+
+// Escuta o documento do totem (coleção raiz devices/{deviceId}) em tempo real e
+// devolve o campo pendingPairing ({ rfidUid, timestamp } ou null). É a ponte da
+// tela de pareamento: quando o ESP32 lê uma tag desconhecida, a Cloud Function
+// grava pendingPairing aqui e o diretor recebe o UID na hora. deviceId null
+// (nenhum totem selecionado ainda) → devolve null e não assina nada.
+export function subscribeDevicePairing(deviceId, cb) {
+  if (!deviceId) {
+    cb(null);
+    return () => {};
+  }
+  const ref = doc(db, "devices", deviceId);
+  return onSnapshot(
+    ref,
+    (snap) => {
+      cb(snap.exists() ? snap.data().pendingPairing ?? null : null);
+    },
+    (err) => {
+      // Device ainda não seedado no console, ou sem permissão → sem pendência.
+      // A tela continua em "aguardando leitura" sem quebrar.
+      console.error("[subscribeDevicePairing]:", err.code || err);
+      cb(null);
+    }
+  );
+}
+
+// Conclui o pareamento em UMA operação atômica (writeBatch): grava rfidUid no
+// membro E o doc global rfidTags/{rfidUid} que roteia os check-ins. Atômico de
+// propósito — um membro pareado sem entrada em rfidTags nunca faria check-in.
+//   • members: as rules aceitam do diretor só a alteração de rfidUid
+//     (onlyRfidUidChanged, espelha onlyStatusChanged dos subitems).
+//   • rfidTags: setDoc cria ou SOBRESCREVE (reuso de crachá entre comitês). Se a
+//     tag já é de um comitê que o diretor não dirige, a rule de update nega e o
+//     batch inteiro falha (o rfidUid do membro também não é gravado) → o painel
+//     mostra erro. Isso é intencional (evita roubo de tag entre comitês).
+export function pairMemberBadge({ conferenceId, committeeId, memberId, rfidUid }) {
+  const memberRef = doc(
+    db,
+    "conferences",
+    conferenceId,
+    "committees",
+    committeeId,
+    "members",
+    memberId
+  );
+  const tagRef = doc(db, "rfidTags", rfidUid);
+  const batch = writeBatch(db);
+  batch.update(memberRef, { rfidUid });
+  batch.set(tagRef, {
+    conferenceId,
+    committeeId,
+    memberId,
+    pairedAt: serverTimestamp(),
+  });
+  return batch.commit();
+}
+
+// Pede à Cloud Function que zere devices/{deviceId}.pendingPairing depois de um
+// pareamento concluído (o client não escreve em devices — só a function, via
+// Admin SDK). Autenticado pelo ID token do diretor logado. Best-effort: em dev
+// local sem serverless a chamada falha e tudo bem (a baseline da tela já evita
+// reprocessar leituras antigas); o chamador deve tratar a rejeição como benigna.
+export async function clearDevicePairing({ deviceId, conferenceId, committeeId }) {
+  if (!deviceId) return;
+  const user = auth.currentUser;
+  if (!user) throw new Error("not authenticated");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/checkin", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({ action: "clearPending", deviceId, conferenceId, committeeId }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.message || `clearPending ${res.status}`);
+  }
+}
+
+// Registros de presença do comitê (check-ins), mais recentes primeiro. Escritos
+// só pela Cloud Function (Admin SDK); aqui é leitura em tempo real para o painel
+// de presença do diretor. Ordena client-side por timestamp para não exigir
+// índice. Cada registro: { id, memberId, nome, pais, rfidUid, timestamp, status }.
+export function subscribeAttendance(conferenceId, committeeId, cb) {
+  const col = collection(
+    db,
+    "conferences",
+    conferenceId,
+    "committees",
+    committeeId,
+    "attendance"
+  );
+  return onSnapshot(
+    col,
+    (snap) => {
+      cb(
+        snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp))
+      );
+    },
+    (err) => {
+      console.error("[subscribeAttendance]:", err.code || err);
+      cb([]);
+    }
+  );
 }
 
 // ── Writes (diretor) ──────────────────────────────────────────────────────────
