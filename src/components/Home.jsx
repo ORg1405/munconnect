@@ -4,7 +4,6 @@ import { collection, onSnapshot, addDoc, Timestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { useAuth } from "../AuthContext";
 import { MUN_COMMITTEES } from "../data/munCommittees";
-import { DEFAULT_CONFERENCE_ID } from "../data/firestore";
 import UpcomingSimulations from "./UpcomingSimulations";
 import Calendar from "./Calendar";
 import EventModal from "./EventModal";
@@ -94,8 +93,8 @@ function displayName(user) {
 }
 
 // ── Component ─────────────────────────────────────────────────────────────────
-export default function Home({ isAdmin = false, setActiveTab }) {
-  const { user } = useAuth();
+export default function Home() {
+  const { user, isAdmin } = useAuth();
   const navigate = useNavigate();
   const todayStr = new Date().toISOString().slice(0, 10);
 
@@ -320,20 +319,20 @@ export default function Home({ isAdmin = false, setActiveTab }) {
             icon={Icon.motion}
             title="Gerador de Moção"
             desc="Crie moções formais em segundos a partir de modelos prontos por comitê."
-            onClick={() => setActiveTab?.("motion")}
+            onClick={() => navigate("/app/motion")}
           />
           <QuickCard
             icon={Icon.debate}
             title="IA de Debate"
             desc="Pratique discursos e réplicas com um oponente de IA antes da sessão."
             soon
-            onClick={() => setActiveTab?.("debate")}
+            onClick={() => navigate("/app/debate")}
           />
           <QuickCard
             icon={Icon.grid}
             title="Comitês"
             desc="Explore comitês, tópicos em pauta e as listas de delegados de cada um."
-            onClick={() => navigate(`/conference/${DEFAULT_CONFERENCE_ID}`)}
+            onClick={() => navigate("/app/comites")}
           />
         </section>
       </div>

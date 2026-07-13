@@ -122,10 +122,11 @@ export default function CommitteePage() {
 
   return (
     <PageShell>
-      {/* Voltar */}
+      {/* Voltar — sempre para a aba de Comitês da sidebar (independente da
+          conferência/comitê atual). */}
       <nav className="anim-fade-up">
         <Link
-          to={`/conference/${conference.id}`}
+          to="/app/comites"
           className="inline-flex items-center gap-2"
           style={{
             fontSize: "var(--fs-small)",
@@ -134,7 +135,7 @@ export default function CommitteePage() {
             textDecoration: "none",
           }}
         >
-          <span aria-hidden>←</span> {conference.nome}
+          <span aria-hidden>←</span> Comitês
         </Link>
       </nav>
 
@@ -166,12 +167,13 @@ export default function CommitteePage() {
         </p>
       </header>
 
-      {/* 1 — Progresso */}
+      {/* 1 — Progresso (com a legenda dos status dentro do card) */}
       <div className="anim-fade-up mt-8" style={{ animationDelay: "0.1s" }}>
         <ProgressBar
           ratio={progress.ratio}
           counts={progress.counts}
           total={progress.total}
+          legend={<Legend />}
         />
       </div>
 
@@ -182,7 +184,6 @@ export default function CommitteePage() {
         style={{ animationDelay: "0.15s" }}
       >
         <SectionHeading>Agenda</SectionHeading>
-        <Legend />
 
         <div className="mt-6 flex flex-col gap-12">
           {topics.length === 0 && (
@@ -194,16 +195,21 @@ export default function CommitteePage() {
             const subitems = subitemsByTopic[topic.id] ?? [];
             return (
               <article key={topic.id}>
-                <h3
-                  style={{
-                    fontFamily: "var(--font-display)",
-                    fontSize: "var(--fs-h3)",
-                    fontWeight: 400,
-                    margin: 0,
-                  }}
-                >
-                  {topic.titulo}
-                </h3>
+                {/* Título do tópico + chip de status inline (default incomplete),
+                    mesmo padrão dos subitens abaixo. */}
+                <div className="flex flex-wrap items-center gap-3">
+                  <h3
+                    style={{
+                      fontFamily: "var(--font-display)",
+                      fontSize: "var(--fs-h3)",
+                      fontWeight: 400,
+                      margin: 0,
+                    }}
+                  >
+                    {topic.titulo}
+                  </h3>
+                  <StatusBadge status={topic.status ?? "incomplete"} />
+                </div>
                 <ul className="mt-4 flex list-none flex-col gap-2 p-0 m-0">
                   {subitems.length === 0 && (
                     <li style={{ color: "var(--text-muted)", fontSize: "var(--fs-small)" }}>

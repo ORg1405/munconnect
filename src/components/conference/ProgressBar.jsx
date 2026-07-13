@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
  * Barra de progresso do comitê.
  * ratio ∈ [0, 1] — já calculado por computeProgress (complete=1, needs_revision=0.5).
  */
-export default function ProgressBar({ ratio, counts, total }) {
+export default function ProgressBar({ ratio, counts, total, legend }) {
   // Anima o preenchimento de 0 → ratio na montagem
   const [filled, setFilled] = useState(false);
   useEffect(() => {
@@ -90,6 +90,29 @@ export default function ProgressBar({ ratio, counts, total }) {
           }}
         />
       </div>
+
+      {/* Legenda dos status — vive aqui, no card de progresso, onde os chips
+          fazem sentido conceitualmente (e não colada no primeiro tópico). */}
+      {legend && (
+        <div
+          className="mt-5 pt-4"
+          style={{ borderTop: "1px solid var(--border)" }}
+        >
+          <p
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-tiny)",
+              letterSpacing: "0.14em",
+              textTransform: "uppercase",
+              color: "var(--text-muted)",
+              margin: "0 0 10px",
+            }}
+          >
+            Legenda
+          </p>
+          {legend}
+        </div>
+      )}
     </div>
   );
 }

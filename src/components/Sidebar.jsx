@@ -1,7 +1,30 @@
 import { signOut } from "firebase/auth";
 import { auth } from "../firebase";
 import { useAuth } from "../AuthContext";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
+
+// Cada aba da sidebar aponta para uma rota (navegação por URL, não por estado).
+// Assim a sidebar continua visível e funcional em todas as telas internas —
+// inclusive dentro de um comitê (/conference/...).
+const TAB_PATH = {
+  home: "/app",
+  comites: "/app/comites",
+  motion: "/app/motion",
+  debate: "/app/debate",
+  pending: "/app/pending",
+};
+
+// Deriva a aba ativa a partir da URL. Páginas de simulação/comitê
+// (/conference/...) destacam "Comitês".
+function activeTabFromPath(pathname) {
+  if (pathname === "/app" || pathname === "/app/") return "home";
+  if (pathname.startsWith("/app/comites") || pathname.startsWith("/conference"))
+    return "comites";
+  if (pathname.startsWith("/app/motion")) return "motion";
+  if (pathname.startsWith("/app/debate")) return "debate";
+  if (pathname.startsWith("/app/pending")) return "pending";
+  return "home";
+}
 
 const tabs = [
   {
@@ -62,9 +85,12 @@ const adminTabs = [
   },
 ];
 
-export default function Sidebar({ activeTab, setActiveTab, isAdmin }) {
-  const { user } = useAuth();
+export default function Sidebar() {
+  const { user, isAdmin } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
+  const activeTab = activeTabFromPath(location.pathname);
+  const setActiveTab = (id) => navigate(TAB_PATH[id] ?? "/app");
 
   return (
     <aside style={{

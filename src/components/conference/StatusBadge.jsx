@@ -2,7 +2,9 @@ import { STATUS } from "../../data/conferenceModel";
 
 /** Selo de status de um subitem da agenda (verde / amarelo* / cinza). */
 export default function StatusBadge({ status }) {
-  const meta = STATUS[status];
+  // Fallback defensivo: status ausente/desconhecido cai em "incomplete" (cinza),
+  // evitando crash quando um tópico/subitem ainda não tem o campo status.
+  const meta = STATUS[status] ?? STATUS.incomplete;
   return (
     <span
       className="inline-flex items-center gap-1.5 whitespace-nowrap"

@@ -21,11 +21,21 @@ import {
   addDoc,
   collection,
   doc,
+  getDocs,
   onSnapshot,
   serverTimestamp,
   updateDoc,
+  writeBatch,
 } from "firebase/firestore";
 import { db } from "../firebase";
+
+// Remove chaves com valor undefined (addDoc/updateDoc rejeitam undefined; "" e
+// null são aceitos e usados para campos opcionais em branco).
+function pruneUndefined(obj) {
+  const out = {};
+  for (const [k, v] of Object.entries(obj)) if (v !== undefined) out[k] = v;
+  return out;
+}
 
 // Simulação padrão usada pelos atalhos de navegação (dashboard, "Ver comitês").
 // Ajuste conforme a conference criada no Firestore.
@@ -60,6 +70,143 @@ export function subscribeCommittees(conferenceId, cb) {
   return onSnapshot(col, (snap) => {
     cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byOrdem));
   });
+}
+
+// ── Committee CRUD (admin) ─────────────────────────────────────────────────────
+// As regras do Firestore restringem create/update de committees e topics a
+// admins (ver firestore.rules). O guard de UI (isAdmin) evita mostrar os botões;
+// as regras são a barreira de verdade.
+
+// Cria um comitê e, opcionalmente, seus tópicos iniciais. `data` já vem montado
+// pelo chamador (campos do formulário). Retorna o id do comitê criado.
+export async function createCommittee(conferenceId, data, topics = [], uid) {
+  const col = collection(db, "conferences", conferenceId, "committees");
+  const ref = await addDoc(
+    col,
+    pruneUndefined({
+      ...data,
+      ordem: data.ordem ?? Date.now(),
+      createdBy: uid ?? null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+  if (topics.length) await addCommitteeTopics(conferenceId, ref.id, topics, uid);
+  return ref.id;
+}
+
+// Atualiza os campos do documento do comitê (não mexe em subcoleções).
+export function updateCommittee(conferenceId, committeeId, data, uid) {
+  const ref = doc(db, "conferences", conferenceId, "committees", committeeId);
+  return updateDoc(
+    ref,
+    pruneUndefined({ ...data, updatedByUid: uid ?? null, updatedAt: serverTimestamp() })
+  );
+}
+
+// Arquivar / desarquivar (ou qualquer troca de status) — só o campo status muda.
+export function setCommitteeStatus(conferenceId, committeeId, status, uid) {
+  const ref = doc(db, "conferences", conferenceId, "committees", committeeId);
+  return updateDoc(ref, { status, updatedByUid: uid ?? null, updatedAt: serverTimestamp() });
+}
+
+function topicsCol(conferenceId, committeeId) {
+  return collection(db, "conferences", conferenceId, "committees", committeeId, "topics");
+}
+
+// Acrescenta tópicos (e seus subtópicos) a um comitê — append-only, não remove
+// nem altera os existentes. Cada tópico:
+//   { titulo, subtopics?: [{ titulo }] }
+//
+// Numeração automática dos subtópicos = `${n}.${m}` onde n é a posição do tópico
+// pai (contínua a partir dos tópicos já existentes, para não colidir na edição)
+// e m a posição do subtópico. Subitens gravam o schema do INTERPOL:
+// { label, titulo, status, ordem } + createdAt/createdBy.
+export async function addCommitteeTopics(conferenceId, committeeId, topics = [], uid) {
+  if (!topics.length) return;
+  const col = topicsCol(conferenceId, committeeId);
+  // Offset da numeração: quantos tópicos já existem (0 num comitê recém-criado).
+  const existing = await getDocs(col);
+  const base = existing.size;
+
+  for (let i = 0; i < topics.length; i++) {
+    const t = topics[i];
+    const n = base + i + 1; // número do tópico pai (1-based, contínuo)
+    const topicRef = await addDoc(
+      col,
+      pruneUndefined({
+        titulo: t.titulo,
+        status: "incomplete", // default para o chip inline do tópico
+        ordem: n,
+        createdBy: uid ?? null,
+        createdAt: serverTimestamp(),
+      })
+    );
+
+    const subs = (t.subtopics ?? [])
+      .map((s) => ({ titulo: (s.titulo ?? "").trim() }))
+      .filter((s) => s.titulo);
+    if (!subs.length) continue;
+
+    const subCol = collection(col, topicRef.id, "subitems");
+    await Promise.all(
+      subs.map((s, m) =>
+        addDoc(
+          subCol,
+          pruneUndefined({
+            label: `${n}.${m + 1}`, // 1.1, 1.2, 2.1… gerado automaticamente
+            titulo: s.titulo,
+            status: "incomplete",
+            ordem: m + 1,
+            createdBy: uid ?? null,
+            createdAt: serverTimestamp(),
+          })
+        )
+      )
+    );
+  }
+}
+
+// Exclui um comitê em cascata. O client SDK não cascateia deletes, então
+// listamos e apagamos manualmente, em profundidade:
+//   topics/{t}/subitems/{s}  (netos, primeiro)
+//   topics/{t}               (depois o tópico)
+//   documents/{d}, members/{u}
+//   committee                (por último — se algo falhar no meio, o comitê
+//                             continua listável e o delete pode ser reexecutado)
+// Deletes vão em writeBatch de até 450 ops (limite do Firestore é 500).
+export async function deleteCommittee(conferenceId, committeeId) {
+  const comRef = doc(db, "conferences", conferenceId, "committees", committeeId);
+  const refs = [];
+
+  // Tópicos + subitens (netos).
+  const tCol = topicsCol(conferenceId, committeeId);
+  const topicsSnap = await getDocs(tCol);
+  for (const topicDoc of topicsSnap.docs) {
+    const subSnap = await getDocs(collection(tCol, topicDoc.id, "subitems"));
+    for (const s of subSnap.docs) refs.push(s.ref);
+    refs.push(topicDoc.ref);
+  }
+
+  // Documentos e membros (subcoleções diretas do comitê).
+  for (const name of ["documents", "members"]) {
+    const snap = await getDocs(collection(comRef, name));
+    for (const d of snap.docs) refs.push(d.ref);
+  }
+
+  // Doc do comitê por último.
+  refs.push(comRef);
+
+  await deleteRefsInChunks(refs);
+}
+
+// Apaga uma lista de refs em batches (respeitando o limite de 500 ops/batch).
+async function deleteRefsInChunks(refs, chunkSize = 450) {
+  for (let i = 0; i < refs.length; i += chunkSize) {
+    const batch = writeBatch(db);
+    for (const ref of refs.slice(i, i + chunkSize)) batch.delete(ref);
+    await batch.commit();
+  }
 }
 
 // ── Committee detail ──────────────────────────────────────────────────────────

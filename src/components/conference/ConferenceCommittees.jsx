@@ -1,7 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { computeProgress } from "../../data/conferenceModel";
 import { subscribeCommitteeSubitems } from "../../data/firestore";
+
+// Rótulos de status exibidos como selo no card. `active` não recebe selo.
+const STATUS_META = {
+  draft: { label: "Rascunho", color: "var(--text-muted)", bg: "var(--bg-overlay)" },
+  archived: { label: "Arquivado", color: "hsl(38 60% 60%)", bg: "hsl(38 92% 55% / 0.1)" },
+};
 
 /**
  * Cabeçalho + grid de comitês de uma simulação.
@@ -94,7 +100,10 @@ export default function ConferenceCommittees({ conference, committees = [] }) {
   );
 }
 
-function CommitteeCard({ conferenceId, committee, index }) {
+// `onEdit`/`onArchive` (opcionais, só admin) habilitam o menu de ações no card.
+// Quando ausentes, o card é apenas um link — comportamento original preservado
+// na rota /conference/:id (ConferencePage).
+export function CommitteeCard({ conferenceId, committee, index, onEdit, onArchive, onDelete }) {
   const [subitems, setSubitems] = useState([]);
 
   useEffect(() => {
@@ -107,43 +116,72 @@ function CommitteeCard({ conferenceId, committee, index }) {
   }, [conferenceId, committee.id]);
 
   const { ratio } = computeProgress(subitems);
+  const hasMenu = Boolean(onEdit || onArchive || onDelete);
+  const statusMeta = STATUS_META[committee.status];
+  const archived = committee.status === "archived";
 
   return (
-    <Link
-      to={`/conference/${conferenceId}/committee/${committee.id}`}
-      className="card-glow anim-fade-up group flex flex-col"
-      style={{
-        background: "var(--bg-elevated)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-lg)",
-        boxShadow: "var(--ring-soft)",
-        padding: "24px 24px 20px",
-        textDecoration: "none",
-        color: "inherit",
-        animationDelay: `${0.08 + index * 0.07}s`,
-      }}
-    >
-      <div className="flex items-baseline justify-between">
-        <span
-          style={{
-            fontFamily: "var(--font-mono)",
-            fontSize: "var(--fs-tiny)",
-            color: "var(--accent-400)",
-            letterSpacing: "0.12em",
-          }}
-        >
-          {String(index + 1).padStart(2, "0")}
-        </span>
-        <span
-          className="qcard-arrow"
-          aria-hidden
-          style={{ color: "var(--text-muted)" }}
-        >
-          →
-        </span>
-      </div>
+    <div className="relative" style={{ opacity: archived ? 0.62 : 1 }}>
+      {hasMenu && (
+        <CardMenu
+          committee={committee}
+          onEdit={onEdit}
+          onArchive={onArchive}
+          onDelete={onDelete}
+        />
+      )}
+      <Link
+        to={`/conference/${conferenceId}/committee/${committee.id}`}
+        className="card-glow anim-fade-up group flex flex-col"
+        style={{
+          background: "var(--bg-elevated)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--radius-lg)",
+          boxShadow: "var(--ring-soft)",
+          padding: "24px 24px 20px",
+          textDecoration: "none",
+          color: "inherit",
+          animationDelay: `${0.08 + index * 0.07}s`,
+        }}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span
+            style={{
+              fontFamily: "var(--font-mono)",
+              fontSize: "var(--fs-tiny)",
+              color: "var(--accent-400)",
+              letterSpacing: "0.12em",
+            }}
+          >
+            {String(index + 1).padStart(2, "0")}
+          </span>
+          <div className="flex items-center gap-2">
+            {statusMeta && (
+              <span
+                style={{
+                  fontSize: "var(--fs-tiny)",
+                  fontWeight: 600,
+                  color: statusMeta.color,
+                  background: statusMeta.bg,
+                  border: "1px solid var(--border)",
+                  borderRadius: "var(--radius-badge)",
+                  padding: "1px 8px",
+                }}
+              >
+                {statusMeta.label}
+              </span>
+            )}
+            <span
+              className="qcard-arrow"
+              aria-hidden
+              style={{ color: "var(--text-muted)", marginRight: hasMenu ? 22 : 0 }}
+            >
+              →
+            </span>
+          </div>
+        </div>
 
-      <h2
+        <h2
         style={{
           fontFamily: "var(--font-display)",
           fontSize: "2.25rem",
@@ -206,6 +244,133 @@ function CommitteeCard({ conferenceId, committee, index }) {
           {Math.round(ratio * 100)}%
         </span>
       </div>
-    </Link>
+      </Link>
+    </div>
   );
 }
+
+// Menu de ações do card (só admin): editar / arquivar / desarquivar.
+// Fica sobreposto ao Link; os cliques param a propagação para não navegar.
+function CardMenu({ committee, onEdit, onArchive, onDelete }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [open]);
+
+  const stop = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+  const archived = committee.status === "archived";
+
+  return (
+    <div ref={ref} className="absolute" style={{ top: 18, right: 16, zIndex: 2 }}>
+      <button
+        type="button"
+        aria-label="Ações do comitê"
+        onClick={(e) => {
+          stop(e);
+          setOpen((v) => !v);
+        }}
+        style={{
+          width: 26,
+          height: 26,
+          display: "grid",
+          placeItems: "center",
+          borderRadius: 7,
+          border: "1px solid var(--border)",
+          background: "var(--bg-overlay)",
+          color: "var(--text-secondary)",
+          cursor: "pointer",
+          lineHeight: 0,
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+          <circle cx="12" cy="5" r="1.6" />
+          <circle cx="12" cy="12" r="1.6" />
+          <circle cx="12" cy="19" r="1.6" />
+        </svg>
+      </button>
+      {open && (
+        <div
+          role="menu"
+          style={{
+            position: "absolute",
+            top: 30,
+            right: 0,
+            minWidth: 150,
+            background: "var(--bg-overlay)",
+            border: "1px solid var(--border-strong)",
+            borderRadius: "var(--radius-card)",
+            boxShadow: "0 16px 40px hsl(210 42% 2% / 0.55)",
+            padding: 4,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          {onEdit && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                stop(e);
+                setOpen(false);
+                onEdit(committee);
+              }}
+              style={menuItemStyle}
+            >
+              Editar
+            </button>
+          )}
+          {onArchive && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                stop(e);
+                setOpen(false);
+                onArchive(committee);
+              }}
+              style={{ ...menuItemStyle, color: archived ? "var(--brand-400)" : "hsl(38 60% 60%)" }}
+            >
+              {archived ? "Desarquivar" : "Arquivar"}
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                stop(e);
+                setOpen(false);
+                onDelete(committee);
+              }}
+              style={{ ...menuItemStyle, color: "var(--danger, #e24b4a)" }}
+            >
+              Excluir comitê
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const menuItemStyle = {
+  textAlign: "left",
+  fontSize: "var(--fs-small)",
+  color: "var(--text-secondary)",
+  background: "transparent",
+  border: "none",
+  borderRadius: 6,
+  padding: "7px 10px",
+  cursor: "pointer",
+  width: "100%",
+};
