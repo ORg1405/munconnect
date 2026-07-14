@@ -10,30 +10,36 @@
 //         subitems/{subitemId}                 { label, status, committeeId, ordem? }
 //       documents/{docId}                      { titulo, autor, autorUid, url (link colado),
 //                                                 topicId?, tipo: "working" | "final", createdAt }
-//       members/{uid}                          { role: "director" | "delegate",
-//                                                 nome, pais, rfidUid }
-//       attendance/{autoId}                    { memberId, nome, pais, rfidUid,
-//                                                 timestamp, status: "present" }
+//       members/{memberId}                     { role: "director" | "delegate",
+//                                                 nome, pais, uid?, memberId, conferenceId,
+//                                                 committeeId, committeeName, importBatchId?,
+//                                                 createdAt }
+//       attendance/{autoId}                    { memberId, checkinAt,
+//                                                 source: "qr_totem" | "qr_web" | "manual_director",
+//                                                 sessionSlot: null }
 //
 // Os subitems são lidos por tópico (topics/{topicId}/subitems) — sem query
 // collectionGroup, para não depender de índice de collection group. O campo
 // committeeId nos subitems é legado (do listener antigo) e hoje é dispensável.
 //
-// Credenciamento por crachá RFID/NFC (3 totens ESP32 + RC522, FIXOS e GENÉRICOS —
-// qualquer delegado de qualquer comitê usa qualquer totem):
-//   • members/{uid}.rfidUid — UID da tag física pareada ao membro (string) ou
-//     null enquanto não pareado. nome/pais identificam o membro nas telas de
-//     credenciamento e presença (preenchidos no console, como role).
-//   • rfidTags/{rfidUid} (coleção RAIZ) — fonte da verdade global "qual delegado
-//     é esta tag": { conferenceId, committeeId, memberId, pairedAt }. Gravado
-//     pelo diretor no pareamento (ver pairMemberBadge) e lido só pela Cloud
-//     Function de check-in (Admin SDK) para rotear a presença em O(1), sem query.
-//   • devices/{deviceId} (coleção RAIZ) — só identifica o totem físico:
-//       { pendingPairing: { rfidUid, timestamp } | null }
-//     Escrito SOMENTE pela Cloud Function (Admin SDK); o client nunca escreve. O
-//     diretor lê pendingPairing do totem que selecionou (ver subscribeDevicePairing).
-//   • attendance é escrito SOMENTE pela Cloud Function (Admin SDK) a cada
-//     check-in; o client nunca escreve, só lê (diretor).
+// Credenciamento por QR pré-impresso (planilha → import → crachá com QR):
+//   • members são criados pela IMPORTAÇÃO de planilha (ver importDelegates), que
+//     roda com um usuário admin global. O ID do documento (memberId, também
+//     gravado como campo) é o identificador que vai no QR do crachá:
+//         https://{origin}/checkin?m={memberId}
+//     Delegados não têm conta no site (uid = null). Diretores continuam sendo
+//     docs members/{uid} criados à mão no console (nunca vêm da importação) —
+//     é por eles que subscribeMemberRole e a rule isDirector reconhecem o papel.
+//   • O QR é lido pelo totem (ESP32 + GM65) ou pela câmera do próprio celular do
+//     delegado, que abre /checkin. A página/totem chama /api/checkin, que grava
+//     attendance com o Admin SDK. O client NUNCA escreve attendance direto — nem
+//     o diretor (o botão "marcar presença" também passa pelo endpoint).
+//   • attendance é escrito SOMENTE pelo endpoint (Admin SDK); o client só lê
+//     (diretor, painel de presença).
+//
+// Coleções órfãs do modelo RFID antigo (rfidTags/, devices/): não são mais
+// lidas nem escritas por nenhum código. Podem ser apagadas manualmente no
+// console do Firestore — não há remoção programática.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import {
@@ -404,11 +410,11 @@ export function subscribeMemberRole(conferenceId, committeeId, uid, cb) {
   });
 }
 
-// ── Credenciamento por crachá (diretor) ───────────────────────────────────────
+// ── Credenciamento por QR (import de planilha + presença) ─────────────────────
 
-// Todos os membros do comitê (para a tela de pareamento e o painel de presença).
-// Cada membro: { id: uid, role, nome, pais, rfidUid }. Ordena por nome para uma
-// lista estável. Só o diretor usa isso na UI; as rules liberam leitura a membros.
+// Todos os membros do comitê (para o painel de presença do diretor). Cada membro:
+// { id: memberId, role, nome, pais, uid?, committeeName, ... }. Ordena por nome
+// para uma lista estável. As rules liberam leitura a qualquer autenticado.
 export function subscribeMembers(conferenceId, committeeId, cb) {
   const col = collection(
     db,
@@ -436,90 +442,10 @@ export function subscribeMembers(conferenceId, committeeId, cb) {
   );
 }
 
-// Escuta o documento do totem (coleção raiz devices/{deviceId}) em tempo real e
-// devolve o campo pendingPairing ({ rfidUid, timestamp } ou null). É a ponte da
-// tela de pareamento: quando o ESP32 lê uma tag desconhecida, a Cloud Function
-// grava pendingPairing aqui e o diretor recebe o UID na hora. deviceId null
-// (nenhum totem selecionado ainda) → devolve null e não assina nada.
-export function subscribeDevicePairing(deviceId, cb) {
-  if (!deviceId) {
-    cb(null);
-    return () => {};
-  }
-  const ref = doc(db, "devices", deviceId);
-  return onSnapshot(
-    ref,
-    (snap) => {
-      cb(snap.exists() ? snap.data().pendingPairing ?? null : null);
-    },
-    (err) => {
-      // Device ainda não seedado no console, ou sem permissão → sem pendência.
-      // A tela continua em "aguardando leitura" sem quebrar.
-      console.error("[subscribeDevicePairing]:", err.code || err);
-      cb(null);
-    }
-  );
-}
-
-// Conclui o pareamento em UMA operação atômica (writeBatch): grava rfidUid no
-// membro E o doc global rfidTags/{rfidUid} que roteia os check-ins. Atômico de
-// propósito — um membro pareado sem entrada em rfidTags nunca faria check-in.
-//   • members: as rules aceitam do diretor só a alteração de rfidUid
-//     (onlyRfidUidChanged, espelha onlyStatusChanged dos subitems).
-//   • rfidTags: setDoc cria ou SOBRESCREVE (reuso de crachá entre comitês). Se a
-//     tag já é de um comitê que o diretor não dirige, a rule de update nega e o
-//     batch inteiro falha (o rfidUid do membro também não é gravado) → o painel
-//     mostra erro. Isso é intencional (evita roubo de tag entre comitês).
-export function pairMemberBadge({ conferenceId, committeeId, memberId, rfidUid }) {
-  const memberRef = doc(
-    db,
-    "conferences",
-    conferenceId,
-    "committees",
-    committeeId,
-    "members",
-    memberId
-  );
-  const tagRef = doc(db, "rfidTags", rfidUid);
-  const batch = writeBatch(db);
-  batch.update(memberRef, { rfidUid });
-  batch.set(tagRef, {
-    conferenceId,
-    committeeId,
-    memberId,
-    pairedAt: serverTimestamp(),
-  });
-  return batch.commit();
-}
-
-// Pede à Cloud Function que zere devices/{deviceId}.pendingPairing depois de um
-// pareamento concluído (o client não escreve em devices — só a function, via
-// Admin SDK). Autenticado pelo ID token do diretor logado. Best-effort: em dev
-// local sem serverless a chamada falha e tudo bem (a baseline da tela já evita
-// reprocessar leituras antigas); o chamador deve tratar a rejeição como benigna.
-export async function clearDevicePairing({ deviceId, conferenceId, committeeId }) {
-  if (!deviceId) return;
-  const user = auth.currentUser;
-  if (!user) throw new Error("not authenticated");
-  const idToken = await user.getIdToken();
-  const res = await fetch("/api/checkin", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${idToken}`,
-    },
-    body: JSON.stringify({ action: "clearPending", deviceId, conferenceId, committeeId }),
-  });
-  if (!res.ok) {
-    const data = await res.json().catch(() => ({}));
-    throw new Error(data.message || `clearPending ${res.status}`);
-  }
-}
-
 // Registros de presença do comitê (check-ins), mais recentes primeiro. Escritos
-// só pela Cloud Function (Admin SDK); aqui é leitura em tempo real para o painel
-// de presença do diretor. Ordena client-side por timestamp para não exigir
-// índice. Cada registro: { id, memberId, nome, pais, rfidUid, timestamp, status }.
+// só pelo endpoint /api/checkin (Admin SDK); aqui é leitura em tempo real para o
+// painel de presença do diretor. Ordena client-side por checkinAt para não
+// exigir índice. Cada registro: { id, memberId, checkinAt, source, sessionSlot }.
 export function subscribeAttendance(conferenceId, committeeId, cb) {
   const col = collection(
     db,
@@ -535,7 +461,7 @@ export function subscribeAttendance(conferenceId, committeeId, cb) {
       cb(
         snap.docs
           .map((d) => ({ id: d.id, ...d.data() }))
-          .sort((a, b) => toMillis(b.timestamp) - toMillis(a.timestamp))
+          .sort((a, b) => toMillis(b.checkinAt) - toMillis(a.checkinAt))
       );
     },
     (err) => {
@@ -543,6 +469,111 @@ export function subscribeAttendance(conferenceId, committeeId, cb) {
       cb([]);
     }
   );
+}
+
+// ── Importação de delegados (admin global) ────────────────────────────────────
+// A planilha é a fonte da verdade dos delegados. A tela de import (admin) monta
+// um `plan` já validado e chama importDelegates para criar os membros em batch.
+
+// Lê (uma vez) todos os membros de vários comitês de uma conference — usado pela
+// tela de import para deduplicar por nome+comitê antes de gravar. Retorna
+// [{ id, nome, pais, role, committeeId }].
+export async function fetchExistingMembers(conferenceId, committeeIds) {
+  const out = [];
+  await Promise.all(
+    committeeIds.map(async (committeeId) => {
+      const snap = await getDocs(
+        collection(db, "conferences", conferenceId, "committees", committeeId, "members")
+      );
+      for (const d of snap.docs) {
+        out.push({ id: d.id, committeeId, ...d.data() });
+      }
+    })
+  );
+  return out;
+}
+
+// Cria os delegados de uma importação em batch. `plan` = [{ nome, pais,
+// committeeId, committeeName }] — já validado pela tela (comitê existe, nome não
+// vazio, sem duplicatas). Todos entram com role FIXO "delegate" (diretores nunca
+// vêm por importação) e o mesmo importBatchId, para rollback fácil.
+//
+// O ref de cada membro é pré-gerado (doc(collection(...))) para conhecer o
+// memberId ANTES do commit — assim ele já é gravado como campo (usado no
+// collectionGroup do endpoint) e a tela pode gerar os QR codes na hora.
+// Retorna { importBatchId, created: [{ memberId, nome, pais, committeeId,
+// committeeName }] }, onde `created` alimenta a geração do PDF e o rollback.
+export async function importDelegates(conferenceId, plan) {
+  const importBatchId = `imp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const created = [];
+  const CHUNK = 450; // limite do Firestore é 500 ops/batch
+
+  for (let i = 0; i < plan.length; i += CHUNK) {
+    const batch = writeBatch(db);
+    for (const row of plan.slice(i, i + CHUNK)) {
+      const ref = doc(
+        collection(db, "conferences", conferenceId, "committees", row.committeeId, "members")
+      );
+      const data = pruneUndefined({
+        memberId: ref.id,
+        nome: row.nome,
+        pais: row.pais,
+        role: "delegate",
+        uid: null,
+        conferenceId,
+        committeeId: row.committeeId,
+        committeeName: row.committeeName,
+        importBatchId,
+        createdAt: serverTimestamp(),
+      });
+      batch.set(ref, data);
+      created.push({
+        memberId: ref.id,
+        nome: row.nome,
+        pais: row.pais,
+        committeeId: row.committeeId,
+        committeeName: row.committeeName,
+      });
+    }
+    await batch.commit();
+  }
+
+  return { importBatchId, created };
+}
+
+// Desfaz uma importação apagando os membros criados. Recebe a lista `created`
+// devolvida por importDelegates (não faz query por importBatchId — evita
+// depender de índice de collection group só para o rollback).
+export async function rollbackImport(conferenceId, created) {
+  const refs = created.map((m) =>
+    doc(db, "conferences", conferenceId, "committees", m.committeeId, "members", m.memberId)
+  );
+  await deleteRefsInChunks(refs);
+}
+
+// Marca presença manualmente (diretor) — o client nunca escreve attendance
+// direto, então isto passa pelo endpoint com source "manual_director",
+// autenticado pelo ID token do diretor logado (o endpoint confere isDirector).
+export async function markPresenceManually({ conferenceId, committeeId, memberId }) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("not authenticated");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/checkin", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      m: memberId,
+      source: "manual_director",
+      conferenceId,
+      committeeId,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || `checkin ${res.status}`);
+  return data;
 }
 
 // ── Writes (diretor) ──────────────────────────────────────────────────────────

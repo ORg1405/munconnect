@@ -12,6 +12,7 @@ const TAB_PATH = {
   motion: "/app/motion",
   debate: "/app/debate",
   pending: "/app/pending",
+  importar: "/app/importar",
 };
 
 // Deriva a aba ativa a partir da URL. Páginas de simulação/comitê
@@ -23,6 +24,7 @@ function activeTabFromPath(pathname) {
   if (pathname.startsWith("/app/motion")) return "motion";
   if (pathname.startsWith("/app/debate")) return "debate";
   if (pathname.startsWith("/app/pending")) return "pending";
+  if (pathname.startsWith("/app/importar")) return "importar";
   return "home";
 }
 
@@ -72,6 +74,17 @@ const tabs = [
 ];
 
 const adminTabs = [
+  {
+    id: "importar",
+    label: "Importar delegados",
+    adminOnly: true,
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+        <path d="M7 1.5v7M4.5 6L7 8.5 9.5 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M2 10.5v1a1 1 0 001 1h8a1 1 0 001-1v-1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
   {
     id: "pending",
     label: "Revisão pendente",

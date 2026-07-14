@@ -1,44 +1,47 @@
-// Vercel serverless function — endpoint de check-in do totem RFID/NFC (ESP32).
+// Vercel serverless function — endpoint de check-in por QR (modelo pré-impresso).
 //
-// O totem físico NÃO é um usuário autenticado do app. Ele fala só com este
-// endpoint, que usa o Firebase Admin SDK (ignora as Security Rules) para gravar
-// no Firestore com identidade de servidor. Assim o ESP32 nunca escreve direto no
-// Firestore nem carrega credenciais de banco.
+// Cada delegado tem um crachá com um QR que aponta para
+//   https://{origin}/checkin?m={memberId}
+// O QR é lido pelo totem (ESP32 + módulo GM65), que faz uma requisição HTTP
+// direta a este endpoint, OU pela câmera do próprio celular do delegado, que
+// abre a página /checkin — e essa página chama este endpoint. Em ambos os casos
+// a presença é gravada aqui com o Firebase Admin SDK (ignora as Security Rules),
+// então nenhum dispositivo escreve direto no Firestore.
 //
-// Os 3 totens são FIXOS e GENÉRICOS: um delegado de qualquer comitê pode se
-// credenciar em qualquer totem. O totem não sabe a que comitê a tag pertence —
-// só envia o UID lido. O roteamento é feito pela coleção global rfidTags.
+// GET ou POST /api/checkin
+//   params (query string ou body JSON): { m, source?, secret? }
+//     m       = memberId (ID do documento do membro; o que vai no QR)
+//     source  = "qr_totem" | "qr_web" | "manual_director"   (default: "qr_web")
+//     secret  = obrigatório só quando source === "qr_totem"
 //
-// POST /api/checkin
-//   body: { deviceId, apiSecret, rfidUid }
+// Autenticação por origem:
+//   • qr_totem       → exige `secret` === process.env.TOTEM_SECRET (hardcoded no
+//                      firmware do ESP32). Segredo errado → 403.
+//   • qr_web         → sem segredo (o delegado não tem credencial). Rate limit de
+//                      20 req/min por memberId (não por IP: no evento os celulares
+//                      compartilham o IP do WiFi, então limitar por IP travaria o
+//                      fluxo; por memberId ainda barra repetição do mesmo QR).
+//   • manual_director→ o diretor marca presença pela UI quando o QR falhou. Exige
+//                      Authorization: Bearer <ID token do Firebase> e que o autor
+//                      seja diretor (members/{uid}.role == "director") do comitê
+//                      do membro. O client nunca escreve attendance direto.
 //
-// Autenticação do dispositivo: apiSecret é comparado a process.env.CHECKIN_SECRET
-// (nunca vai ao client nem ao repo). Segredo errado → 401.
+// Fluxo: resolve o membro por collectionGroup("members").where("memberId","==",m)
+// (get O(1) — exige índice de collection group em members.memberId, ver
+// firestore.indexes.json). Não achou → 404. Achou → grava um doc em
+//   conferences/{conferenceId}/committees/{committeeId}/attendance/{autoId}
+//     = { memberId, checkinAt: serverTimestamp(), source, sessionSlot: null }
+// Dedup: se já houve check-in do mesmo membro nos últimos 30 min, não duplica.
 //
-// Dois modos, decididos pela existência de rfidTags/{rfidUid} (get O(1), sem query):
-//   • PAREAMENTO (a tag não está em rfidTags): grava a pendência em
-//       devices/{deviceId} = { pendingPairing: { rfidUid, timestamp } }
-//     A tela de pareamento do diretor escuta esse doc e conclui o vínculo.
-//   • CHECK-IN (a tag existe em rfidTags): lê { conferenceId, committeeId,
-//     memberId } de lá e grava a presença em
-//       conferences/{conferenceId}/committees/{committeeId}/attendance/{autoId}
-//       = { memberId, nome, pais, rfidUid, timestamp, status: "present" }
-//     Idempotente por dia: se o membro já tem presença hoje, não duplica.
+// Resposta JSON (o totem usa `status` p/ LED verde/vermelho; a página renderiza):
+//   200 { status: "ok" | "already_present", memberName, committeeName, checkinAt }
+//   404 { status: "not_found", message }
+//   4xx/5xx { status: "error", message }
 //
-// Resposta JSON (o ESP32 usa `status` para LED verde/vermelho e `message` no OLED):
-//   200 { ok: true, mode: "checkin", status: "present" | "already_present",
-//         member: { nome, pais }, message }
-//   200 { ok: true, mode: "pairing", status: "unknown_tag", message }
-//   4xx/5xx { ok: false, status: "error", message }
-//
-// Ação auxiliar — limpeza de pendência (chamada pela TELA do diretor, não pelo
-// totem), autenticada pelo ID token do Firebase (não pelo segredo do totem):
-//   POST /api/checkin  { action: "clearPending", deviceId, conferenceId, committeeId }
-//     header: Authorization: Bearer <idToken do diretor>
-//   Zera devices/{deviceId}.pendingPairing com Admin SDK depois que a tela
-//   concluiu um pareamento, para um pendingPairing residual não confundir o
-//   próximo pareamento em sequência rápida. O client nunca escreve devices
-//   direto — pede à function.
+// sessionSlot fica reservado (sempre null por enquanto) — ver o schema abaixo.
+// FASE 2: vai permitir múltiplos check-ins por dia em horários distintos
+// (manha_1, tarde_1, tarde_2, noite_1), configurados por conferência. Nada disso
+// é implementado agora — o campo só existe para não migrar o schema depois.
 
 import { cert, getApp, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
@@ -62,181 +65,174 @@ function ensureApp() {
 const getDb = () => getFirestore(ensureApp());
 const getAdminAuth = () => getAuth(ensureApp());
 
-// Dia local (fuso do evento, America/Sao_Paulo ≈ UTC-3) de um instante, no
-// formato "YYYY-MM-DD". Usado para deduplicar presença "do dia" comparando
-// strings — sem lib de timezone e sem índice composto no Firestore.
-const TZ_OFFSET_MS = -3 * 60 * 60 * 1000;
-function localDayKey(ms) {
-  return new Date(ms + TZ_OFFSET_MS).toISOString().slice(0, 10);
-}
+const DEDUP_WINDOW_MS = 30 * 60 * 1000; // 30 min
+const VALID_SOURCES = new Set(["qr_totem", "qr_web", "manual_director"]);
 
-function bad(res, code, message) {
-  res.status(code).json({ ok: false, status: "error", message });
-}
-
-// Limpa devices/{deviceId}.pendingPairing após a tela concluir um pareamento.
-// Autoriza pelo ID token do Firebase: o chamador tem de ser diretor do comitê que
-// está pareando. Os totens são genéricos (não têm dono), então qualquer diretor
-// pode limpar qualquer totem — não há mais checagem de vínculo device→comitê.
-async function handleClearPending(req, res, body) {
-  const { deviceId, conferenceId, committeeId } = body;
-  if (!deviceId || !conferenceId || !committeeId) {
-    return bad(res, 400, "Missing deviceId, conferenceId or committeeId");
+// ── Rate limit em memória (só para qr_web) ────────────────────────────────────
+// Janela deslizante por memberId (NÃO por IP): num evento os delegados escaneiam
+// pelo WiFi do local, saindo todos por um único IP NAT — limitar por IP travaria
+// o fluxo principal. Limitar por memberId dá folga para retries legítimos de um
+// mesmo delegado e ainda barra o abuso de repetir o mesmo QR. Best-effort: cada
+// instância serverless tem seu próprio Map (limite por instância, não global).
+const RATE = new Map(); // memberId -> number[] (timestamps ms)
+function rateLimited(key, limit = 20, windowMs = 60_000) {
+  const now = Date.now();
+  const arr = (RATE.get(key) || []).filter((t) => now - t < windowMs);
+  if (arr.length >= limit) {
+    RATE.set(key, arr);
+    return true;
   }
+  arr.push(now);
+  RATE.set(key, arr);
+  if (RATE.size > 5000) RATE.clear(); // guarda contra crescimento ilimitado
+  return false;
+}
 
-  const authz = req.headers.authorization || "";
-  const idToken = authz.startsWith("Bearer ") ? authz.slice(7) : null;
-  if (!idToken) return bad(res, 401, "Missing bearer token");
+function fail(res, code, message) {
+  return res.status(code).json({ status: "error", message });
+}
 
-  try {
-    let uid;
+// Junta parâmetros de query string (GET) e body JSON (POST). Body tem prioridade.
+function readParams(req) {
+  const q = req.query || {};
+  let b = {};
+  if (req.body) {
     try {
-      ({ uid } = await getAdminAuth().verifyIdToken(idToken));
+      b = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
     } catch {
-      return bad(res, 401, "Invalid token");
+      b = {};
     }
-
-    const db = getDb();
-    const memberSnap = await db
-      .collection("conferences").doc(conferenceId)
-      .collection("committees").doc(committeeId)
-      .collection("members").doc(uid)
-      .get();
-    if (!memberSnap.exists || memberSnap.get("role") !== "director") {
-      return bad(res, 403, "Not a director of this committee");
-    }
-
-    const devRef = db.collection("devices").doc(deviceId);
-    const devSnap = await devRef.get();
-    if (!devSnap.exists) {
-      // Nada a limpar — trata como sucesso (idempotente).
-      return res.status(200).json({ ok: true, action: "clearPending", status: "cleared" });
-    }
-
-    await devRef.set(
-      { pendingPairing: null, updatedAt: FieldValue.serverTimestamp() },
-      { merge: true }
-    );
-    return res.status(200).json({ ok: true, action: "clearPending", status: "cleared" });
-  } catch (err) {
-    console.error("[/api/checkin clearPending] error:", err);
-    return bad(res, 500, err.message || "Internal error");
   }
+  return { ...q, ...b };
 }
 
 export default async function handler(req, res) {
-  if (req.method !== "POST") {
-    return bad(res, 405, "Method not allowed");
+  if (req.method !== "GET" && req.method !== "POST") {
+    return fail(res, 405, "Method not allowed");
   }
 
-  let body;
-  try {
-    body = typeof req.body === "string" ? JSON.parse(req.body) : req.body || {};
-  } catch {
-    return bad(res, 400, "Invalid JSON body");
+  const params = readParams(req);
+  const m = typeof params.m === "string" ? params.m.trim() : "";
+  const source = typeof params.source === "string" ? params.source : "qr_web";
+
+  if (!m) return fail(res, 400, "Missing member id (m)");
+  if (!VALID_SOURCES.has(source)) return fail(res, 400, "Invalid source");
+
+  // ── Autenticação por origem (antes de tocar no banco) ───────────────────────
+  if (source === "qr_totem") {
+    const expected = process.env.TOTEM_SECRET;
+    if (!expected) return fail(res, 500, "TOTEM_SECRET not configured");
+    if (typeof params.secret !== "string" || params.secret !== expected) {
+      return fail(res, 403, "Unauthorized totem");
+    }
+  } else if (source === "qr_web") {
+    if (rateLimited(m)) {
+      return fail(res, 429, "Muitas tentativas. Aguarde um instante.");
+    }
   }
 
-  // Ação da tela do diretor (autenticada por ID token, não pelo segredo do totem).
-  if (body.action === "clearPending") {
-    return handleClearPending(req, res, body);
-  }
-
-  const { deviceId, apiSecret, rfidUid } = body;
-
-  // Segredo do dispositivo primeiro (não revela nada sobre o resto em caso de erro).
-  const expected = process.env.CHECKIN_SECRET;
-  if (!expected) return bad(res, 500, "CHECKIN_SECRET not configured");
-  if (typeof apiSecret !== "string" || apiSecret !== expected) {
-    return bad(res, 401, "Unauthorized device");
-  }
-
-  if (!deviceId || !rfidUid) {
-    return bad(res, 400, "Missing deviceId or rfidUid");
+  // manual_director precisa do ID token. Extraímos aqui; a VERIFICAÇÃO acontece
+  // dentro do try, ANTES de qualquer leitura do banco, para um token inválido não
+  // disparar a query de collectionGroup (evita leitura/DoS com token falso).
+  let directorToken = null;
+  if (source === "manual_director") {
+    const authz = req.headers.authorization || "";
+    directorToken = authz.startsWith("Bearer ") ? authz.slice(7) : null;
+    if (!directorToken) return fail(res, 401, "Missing bearer token");
   }
 
   try {
     const db = getDb();
 
-    // Fonte da verdade: rfidTags/{rfidUid} (get O(1), sem query nem índice).
-    const tagSnap = await db.collection("rfidTags").doc(rfidUid).get();
+    // manual_director: valida o token ANTES de tocar no banco. Só conhecemos o
+    // comitê depois de resolver o membro, então a checagem de isDirector fica
+    // logo após a query; mas um token inválido já é barrado aqui.
+    let directorUid = null;
+    if (source === "manual_director") {
+      try {
+        ({ uid: directorUid } = await getAdminAuth().verifyIdToken(directorToken));
+      } catch {
+        return fail(res, 401, "Invalid token");
+      }
+    }
 
-    // ── Modo PAREAMENTO (tag ainda não vinculada a ninguém) ───────────────────
-    if (!tagSnap.exists) {
-      await db.collection("devices").doc(deviceId).set(
-        {
-          pendingPairing: { rfidUid, timestamp: FieldValue.serverTimestamp() },
-          updatedAt: FieldValue.serverTimestamp(),
-        },
-        { merge: true }
-      );
-      return res.status(200).json({
-        ok: true,
-        mode: "pairing",
-        status: "unknown_tag",
-        message: "Crachá não pareado — aguardando o diretor no painel.",
+    // Resolve o membro por collectionGroup (memberId é gravado como campo no
+    // import). O ID do documento não pode ser filtrado direto num collectionGroup.
+    const memberSnap = await db
+      .collectionGroup("members")
+      .where("memberId", "==", m)
+      .limit(1)
+      .get();
+
+    if (memberSnap.empty) {
+      return res.status(404).json({
+        status: "not_found",
+        message: "Delegado não encontrado.",
       });
     }
 
-    // ── Modo CHECK-IN ─────────────────────────────────────────────────────────
-    const tag = tagSnap.data();
-    const { conferenceId, committeeId, memberId } = tag;
-    if (!conferenceId || !committeeId || !memberId) {
-      return bad(res, 500, "rfidTags entry incomplete");
-    }
+    const memberDoc = memberSnap.docs[0];
+    const member = memberDoc.data();
+    // Caminho: conferences/{cid}/committees/{comid}/members/{mid}
+    const parts = memberDoc.ref.path.split("/");
+    const conferenceId = parts[1];
+    const committeeId = parts[3];
+    const memberName = member.nome ?? null;
+    const memberCountry = member.pais ?? null;
+    const committeeName = member.committeeName ?? committeeId;
 
-    // Nome/país para denormalizar na presença + resposta (o member pode ter sido
-    // removido: nesse caso registra a presença mesmo assim, só sem nome/país).
-    const memberSnap = await db
-      .collection("conferences").doc(conferenceId)
-      .collection("committees").doc(committeeId)
-      .collection("members").doc(memberId)
-      .get();
-    const nome = memberSnap.exists ? memberSnap.get("nome") ?? null : null;
-    const pais = memberSnap.exists ? memberSnap.get("pais") ?? null : null;
+    // manual_director: confere que o autor (já autenticado) é diretor DESTE comitê.
+    if (source === "manual_director") {
+      const dirSnap = await db
+        .collection("conferences").doc(conferenceId)
+        .collection("committees").doc(committeeId)
+        .collection("members").doc(directorUid)
+        .get();
+      if (!dirSnap.exists || dirSnap.get("role") !== "director") {
+        return fail(res, 403, "Not a director of this committee");
+      }
+    }
 
     const attendanceCol = db
       .collection("conferences").doc(conferenceId)
       .collection("committees").doc(committeeId)
       .collection("attendance");
 
-    // Já registrou hoje? Não duplica (scan repetido acende verde mesmo assim).
-    // Filtra por memberId (equality, sem índice composto) e compara o dia local
-    // em JS — cada membro tem no máximo um registro por dia, então é barato.
-    const today = localDayKey(Date.now());
-    const prior = await attendanceCol.where("memberId", "==", memberId).get();
-    const already = prior.docs.some((d) => {
-      const ts = d.get("timestamp");
-      return ts && localDayKey(ts.toMillis()) === today;
-    });
+    // Dedup: check-in mais recente do membro dentro da janela de 30 min?
+    const prior = await attendanceCol.where("memberId", "==", m).get();
+    let lastMs = 0;
+    for (const d of prior.docs) {
+      const ts = d.get("checkinAt");
+      const ms = ts && typeof ts.toMillis === "function" ? ts.toMillis() : 0;
+      if (ms > lastMs) lastMs = ms;
+    }
 
-    if (already) {
+    if (lastMs && Date.now() - lastMs < DEDUP_WINDOW_MS) {
       return res.status(200).json({
-        ok: true,
-        mode: "checkin",
         status: "already_present",
-        member: { nome, pais },
-        message: `${nome ?? "Membro"} já registrado hoje.`,
+        memberName,
+        memberCountry,
+        committeeName,
+        checkinAt: new Date(lastMs).toISOString(),
       });
     }
 
     await attendanceCol.add({
-      memberId,
-      nome,
-      pais,
-      rfidUid,
-      timestamp: FieldValue.serverTimestamp(),
-      status: "present",
+      memberId: m,
+      checkinAt: FieldValue.serverTimestamp(),
+      source,
+      sessionSlot: null, // reservado — ver cabeçalho (fase 2)
     });
 
     return res.status(200).json({
-      ok: true,
-      mode: "checkin",
-      status: "present",
-      member: { nome, pais },
-      message: `Presença registrada: ${nome ?? "membro"}.`,
+      status: "ok",
+      memberName,
+      memberCountry,
+      committeeName,
+      checkinAt: new Date().toISOString(),
     });
   } catch (err) {
     console.error("[/api/checkin] error:", err);
-    return bad(res, 500, err.message || "Internal error");
+    return fail(res, 500, err.message || "Internal error");
   }
 }

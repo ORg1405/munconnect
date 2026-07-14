@@ -15,7 +15,7 @@ import {
 import PageShell from "./PageShell";
 import ProgressBar from "./ProgressBar";
 import StatusBadge from "./StatusBadge";
-import CredenciamentoPanel from "./CredenciamentoPanel";
+import AttendancePanel from "./AttendancePanel";
 
 /** Tela 2 — Página do comitê: progresso, agenda com status e working papers. */
 export default function CommitteePage() {
@@ -259,9 +259,9 @@ export default function CommitteePage() {
         />
       </section>
 
-      {/* 4 — Credenciamento por crachá + presença (somente diretor) */}
+      {/* 4 — Presença dos delegados (somente diretor) */}
       {isDirector && (
-        <CredenciamentoPanel
+        <AttendancePanel
           conferenceId={conferenceId}
           committeeId={committeeId}
         />
