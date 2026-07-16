@@ -13,6 +13,7 @@ const TAB_PATH = {
   debate: "/app/debate",
   pending: "/app/pending",
   importar: "/app/importar",
+  sessoes: "/app/sessoes",
 };
 
 // Deriva a aba ativa a partir da URL. Páginas de simulação/comitê
@@ -25,6 +26,7 @@ function activeTabFromPath(pathname) {
   if (pathname.startsWith("/app/debate")) return "debate";
   if (pathname.startsWith("/app/pending")) return "pending";
   if (pathname.startsWith("/app/importar")) return "importar";
+  if (pathname.startsWith("/app/sessoes")) return "sessoes";
   return "home";
 }
 
@@ -82,6 +84,17 @@ const adminTabs = [
       <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
         <path d="M7 1.5v7M4.5 6L7 8.5 9.5 6" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
         <path d="M2 10.5v1a1 1 0 001 1h8a1 1 0 001-1v-1" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+      </svg>
+    ),
+  },
+  {
+    id: "sessoes",
+    label: "Sessões",
+    adminOnly: true,
+    icon: (
+      <svg width="15" height="15" viewBox="0 0 14 14" fill="none">
+        <rect x="1.5" y="2.5" width="11" height="9.5" rx="1" stroke="currentColor" strokeWidth="1.2" />
+        <path d="M1.5 5h11M4.5 1.5v2M9.5 1.5v2" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
       </svg>
     ),
   },

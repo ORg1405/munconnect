@@ -5,6 +5,7 @@
 //
 // Hierarquia:
 //   conferences/{conferenceId}                 { nome }
+//     sessions/{sessionId}                     { name, day, startAt, endAt, order }
 //     committees/{committeeId}                 { sigla, nomeCompleto, descricao, ordem }
 //       topics/{topicId}                       { titulo, ordem }
 //         subitems/{subitemId}                 { label, status, committeeId, ordem? }
@@ -14,9 +15,25 @@
 //                                                 nome, pais, uid?, memberId, conferenceId,
 //                                                 committeeId, committeeName, importBatchId?,
 //                                                 createdAt }
-//       attendance/{autoId}                    { memberId, checkinAt,
-//                                                 source: "qr_totem" | "qr_web" | "manual_director",
-//                                                 sessionSlot: null }
+//       attendance/{sessionId_memberId}        { memberId, sessionId,
+//                                                 status: "P" | "PV" | "ausente",
+//                                                 checkinAt, source: "qr_totem" | "qr_web" |
+//                                                 "manual_director", lastEditedAt?, lastEditedBy? }
+//
+// Sessões (subcollection da conference): valem para TODOS os comitês
+// simultaneamente (todos têm chamada no mesmo horário) — não é por-comitê. São
+// criadas/editadas pela tela de admin (Sessions.jsx); leitura livre a autenticados.
+//
+// Presença por SESSÃO (não mais "presente hoje"): o doc de attendance tem ID
+// composto `${sessionId}_${memberId}`, garantindo 1 registro por par único. Não há
+// mais dedup por tempo — reescanear na mesma sessão apenas atualiza o mesmo doc
+// (troca P↔PV é aceita). O status "ausente" só existe quando o DIRETOR marca uma
+// ausência explícita; delegado que não escaneou simplesmente não tem doc. O campo
+// legado `sessionSlot` foi removido (substituído por sessionId concreto).
+//
+// Migração: attendance antigos (autoId, sem sessionId/status) são IGNORADOS pelo
+// painel novo (a matriz só considera docs com sessionId) e podem ser apagados à
+// mão no console — eram só dados de teste.
 //
 // Os subitems são lidos por tópico (topics/{topicId}/subitems) — sem query
 // collectionGroup, para não depender de índice de collection group. O campo
@@ -45,6 +62,7 @@
 import {
   addDoc,
   collection,
+  deleteDoc,
   doc,
   getDocs,
   onSnapshot,
@@ -104,6 +122,81 @@ export function subscribeCommittees(conferenceId, cb) {
   return onSnapshot(col, (snap) => {
     cb(snap.docs.map((d) => ({ id: d.id, ...d.data() })).sort(byOrdem));
   });
+}
+
+// ── Sessions (chamadas por conferência) ───────────────────────────────────────
+// Sessões são cadastradas pela tela de admin e valem para TODOS os comitês da
+// conference ao mesmo tempo (mesma janela de horário). Cada doc:
+//   { name, day: number, startAt: Timestamp, endAt: Timestamp, order: number }
+// startAt/endAt são timestamps ABSOLUTOS (o endpoint /api/checkin usa now() entre
+// eles para achar a sessão ativa); `day` é o dia relativo do evento (1,2,3…) só
+// para agrupar na UI; `order` desempata sessões no mesmo dia. As rules liberam
+// escrita só ao admin global (isAdmin); leitura a qualquer autenticado.
+
+function sessionsCol(conferenceId) {
+  return collection(db, "conferences", conferenceId, "sessions");
+}
+
+// Todas as sessões da conference, ordenadas por dia → order → início. Ordena
+// client-side (poucas sessões por evento) para não exigir índice composto.
+export function subscribeSessions(conferenceId, cb) {
+  return onSnapshot(
+    sessionsCol(conferenceId),
+    (snap) => {
+      cb(
+        snap.docs
+          .map((d) => ({ id: d.id, ...d.data() }))
+          .sort(
+            (a, b) =>
+              (a.day ?? 0) - (b.day ?? 0) ||
+              (a.order ?? 0) - (b.order ?? 0) ||
+              toMillis(a.startAt) - toMillis(b.startAt)
+          )
+      );
+    },
+    (err) => {
+      console.error("[subscribeSessions]:", err.code || err);
+      cb([]);
+    }
+  );
+}
+
+// Cria uma sessão. `data` = { name, day, startAt: Date, endAt: Date, order }.
+// startAt/endAt entram como Date (o Firestore converte para Timestamp).
+export function createSession(conferenceId, data, uid) {
+  return addDoc(
+    sessionsCol(conferenceId),
+    pruneUndefined({
+      name: data.name,
+      day: data.day,
+      startAt: data.startAt,
+      endAt: data.endAt,
+      order: data.order ?? 0,
+      createdBy: uid ?? null,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    })
+  );
+}
+
+export function updateSession(conferenceId, sessionId, data, uid) {
+  const ref = doc(db, "conferences", conferenceId, "sessions", sessionId);
+  return updateDoc(
+    ref,
+    pruneUndefined({
+      name: data.name,
+      day: data.day,
+      startAt: data.startAt,
+      endAt: data.endAt,
+      order: data.order,
+      updatedByUid: uid ?? null,
+      updatedAt: serverTimestamp(),
+    })
+  );
+}
+
+export function deleteSession(conferenceId, sessionId) {
+  return deleteDoc(doc(db, "conferences", conferenceId, "sessions", sessionId));
 }
 
 // ── Committee CRUD (admin) ─────────────────────────────────────────────────────
@@ -445,7 +538,10 @@ export function subscribeMembers(conferenceId, committeeId, cb) {
 // Registros de presença do comitê (check-ins), mais recentes primeiro. Escritos
 // só pelo endpoint /api/checkin (Admin SDK); aqui é leitura em tempo real para o
 // painel de presença do diretor. Ordena client-side por checkinAt para não
-// exigir índice. Cada registro: { id, memberId, checkinAt, source, sessionSlot }.
+// exigir índice. Cada registro: { id: `${sessionId}_${memberId}`, memberId,
+// sessionId, status: "P" | "PV" | "ausente", checkinAt, source, lastEditedAt?,
+// lastEditedBy? }. Docs legados (sem sessionId) ainda podem aparecer aqui; a
+// matriz do painel os ignora (indexa por sessionId+memberId).
 export function subscribeAttendance(conferenceId, committeeId, cb) {
   const col = collection(
     db,
@@ -551,10 +647,19 @@ export async function rollbackImport(conferenceId, created) {
   await deleteRefsInChunks(refs);
 }
 
-// Marca presença manualmente (diretor) — o client nunca escreve attendance
-// direto, então isto passa pelo endpoint com source "manual_director",
-// autenticado pelo ID token do diretor logado (o endpoint confere isDirector).
-export async function markPresenceManually({ conferenceId, committeeId, memberId }) {
+// Marca/corrige a presença de UM delegado numa sessão específica (diretor) — o
+// client nunca escreve attendance direto, então isto passa pelo endpoint com
+// source "manual_director", autenticado pelo ID token do diretor logado (o
+// endpoint confere isDirector e grava lastEditedAt/lastEditedBy). `sessionId` é
+// explícito (o diretor edita qualquer célula da matriz, inclusive de sessões
+// passadas — não se resolve pela hora atual). `status` = "P" | "PV" | "ausente".
+export async function markPresenceManually({
+  conferenceId,
+  committeeId,
+  sessionId,
+  memberId,
+  status,
+}) {
   const user = auth.currentUser;
   if (!user) throw new Error("not authenticated");
   const idToken = await user.getIdToken();
@@ -569,6 +674,42 @@ export async function markPresenceManually({ conferenceId, committeeId, memberId
       source: "manual_director",
       conferenceId,
       committeeId,
+      sessionId,
+      status,
+    }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.message || `checkin ${res.status}`);
+  return data;
+}
+
+// "Marcar todos como PV nesta sessão" (ou P/ausente): grava o mesmo status para
+// vários delegados de uma vez, num único POST (o endpoint faz o batch com o Admin
+// SDK). `memberIds` são os delegados do comitê do diretor. Retorna o resultado do
+// endpoint ({ status: "ok", updated }).
+export async function bulkMarkPresence({
+  conferenceId,
+  committeeId,
+  sessionId,
+  memberIds,
+  status,
+}) {
+  const user = auth.currentUser;
+  if (!user) throw new Error("not authenticated");
+  const idToken = await user.getIdToken();
+  const res = await fetch("/api/checkin", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${idToken}`,
+    },
+    body: JSON.stringify({
+      source: "manual_director",
+      conferenceId,
+      committeeId,
+      sessionId,
+      memberIds,
+      status,
     }),
   });
   const data = await res.json().catch(() => ({}));

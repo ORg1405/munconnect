@@ -104,18 +104,26 @@ export async function parseMembersFile(file) {
   return { rows, columns, separator };
 }
 
-// Gera e baixa uma planilha .xlsx de presença. `rows` já vem montado pelo
-// chamador: [{ nome, pais, comite, status, horario }]. Mesmo formato de colunas
-// da planilha de importação (Nome/País/Comitê) + Status/Horário, para fechar o
-// loop com o fluxo do diretor.
-export function exportAttendanceXlsx(rows, filename = "presenca.xlsx") {
+// Gera e baixa a CHAMADA em .xlsx no formato de matriz que o diretor tradicional
+// já usa: uma linha por delegado, uma coluna por sessão, valores P / PV / — .
+//   | Nome | País | S1 D1 | S2 D1 | S3 D1 | S1 D2 | ... |
+//   | Ana  | Brasil | P | PV | PV | P |
+// `sessionColumns` = rótulos das colunas de sessão (ex. "S1 D1"), já na ordem.
+// `rows` = [{ nome, pais, cells: ["P"|"PV"|"—", ...] }] — cada `cells` alinhado a
+// `sessionColumns`. O chamador (painel do diretor) monta rótulos e células a
+// partir das sessões e do status por par sessão+delegado.
+export function exportAttendanceMatrixXlsx({ sessionColumns, rows }, filename = "chamada.xlsx") {
   const aoa = [
-    ["Nome", "País", "Comitê", "Status", "Horário do check-in"],
-    ...rows.map((r) => [r.nome || "", r.pais || "", r.comite || "", r.status || "", r.horario || ""]),
+    ["Nome", "País", ...sessionColumns],
+    ...rows.map((r) => [r.nome || "", r.pais || "", ...r.cells]),
   ];
   const ws = XLSX.utils.aoa_to_sheet(aoa);
-  ws["!cols"] = [{ wch: 28 }, { wch: 22 }, { wch: 16 }, { wch: 12 }, { wch: 20 }];
+  ws["!cols"] = [
+    { wch: 28 },
+    { wch: 22 },
+    ...sessionColumns.map(() => ({ wch: 8 })),
+  ];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Presença");
+  XLSX.utils.book_append_sheet(wb, ws, "Chamada");
   XLSX.writeFile(wb, filename);
 }

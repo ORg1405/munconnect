@@ -5,12 +5,14 @@ rules_version = '2';
 //
 // Hierarquia (ver src/data/firestore.js):
 //   conferences/{conferenceId}
+//     sessions/{sessionId}        { name, day, startAt, endAt, order }
 //     committees/{committeeId}
 //       topics/{topicId}
 //         subitems/{subitemId}    { status, ... }
 //       documents/{docId}
 //       members/{memberId}        { role, nome, pais, uid?, memberId, committeeName, ... }
-//       attendance/{autoId}       { memberId, checkinAt, source, sessionSlot }
+//       attendance/{sessionId_memberId} { memberId, sessionId, status: "P"|"PV"|"ausente",
+//                                         checkinAt, source, lastEditedAt?, lastEditedBy? }
 //
 // Credenciamento por QR pré-impresso: delegados são criados pela IMPORTAÇÃO de
 // planilha (roda como admin global) e recebem um crachá com QR = /checkin?m=
@@ -76,9 +78,20 @@ service cloud.firestore {
     }
 
     // ── Conferences ──────────────────────────────────────────────────────────
+    // Admins criam/editam/excluem conferências (AddEventModal / EventModal).
+    // Mantém o padrão "só admin escreve em conferences".
     match /conferences/{conferenceId} {
       allow read: if isSignedIn();
-      allow write: if false;
+      allow create, update, delete: if isAdmin();
+
+      // ── Sessions (chamadas da conference) ──────────────────────────────────
+      // Valem para todos os comitês ao mesmo tempo. Leitura livre a autenticados
+      // (o painel do diretor e o endpoint de check-in as consultam); escrita
+      // client-side SÓ do admin global (tela de gestão de sessões).
+      match /sessions/{sessionId} {
+        allow read: if isSignedIn();
+        allow create, update, delete: if isAdmin();
+      }
 
       // ── Committees ─────────────────────────────────────────────────────────
       // Admins criam/editam comitês (inclui arquivar via campo status) e podem
@@ -96,9 +109,11 @@ service cloud.firestore {
           allow create, update, delete: if isAdmin();
         }
 
-        // ── Attendance (presença) ────────────────────────────────────────────
-        // Registros de check-in por QR: escritos SÓ pelo endpoint /api/checkin
-        // (Admin SDK). Client nunca escreve; só o diretor lê (painel de presença).
+        // ── Attendance (presença por sessão) ─────────────────────────────────
+        // Docs `${sessionId}_${memberId}` com status P/PV/ausente: escritos SÓ
+        // pelo endpoint /api/checkin (Admin SDK) — inclusive as edições manuais do
+        // diretor (source "manual_director", via ID token). Client nunca escreve;
+        // só o diretor lê (matriz de presença).
         match /attendance/{attId} {
           allow read: if isDirector(conferenceId, committeeId);
           allow write: if false;

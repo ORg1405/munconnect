@@ -1,19 +1,29 @@
 // src/pages/CheckinPage.jsx
 // ─────────────────────────────────────────────────────────────────────────────
-// Página pública de check-in (rota /checkin), SEM login. É o que abre quando o
-// delegado escaneia o QR do próprio crachá com a câmera do celular — o QR
-// contém {origin}/checkin?m={memberId}. A página chama /api/checkin com
-// source=qr_web e renderiza a confirmação. Estética Diplomatic Tech.
+// Página pública de check-in (rota /checkin), SEM login. Abre quando o delegado
+// escaneia o QR do próprio crachá — o QR contém {origin}/checkin?m={memberId}.
+//
+// Fluxo em DUAS etapas (presença tipada por sessão):
+//   1. Ao carregar, faz GET /api/checkin (peek): valida o delegado e descobre a
+//      SESSÃO ativa. Mostra nome/país/comitê/sessão + dois botões grandes:
+//        🟢 Presente (P)      — verde
+//        🔵 Presente e Votante (PV) — dourado/azul (var(--accent-400))
+//   2. O delegado toca num botão → POST /api/checkin com o status escolhido →
+//      confirmação.
+// Estética Diplomatic Tech.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 const STATE = {
-  LOADING: "loading",
-  OK: "ok",
-  ALREADY: "already_present",
-  NOT_FOUND: "not_found",
+  LOADING: "loading", // resolvendo delegado + sessão (peek)
+  CHOICE: "choice", // pronto: mostra os botões P / PV
+  SUBMITTING: "submitting", // gravando a escolha
+  OK: "ok", // presença registrada
+  NOT_FOUND: "not_found", // QR não corresponde a delegado
+  NO_SESSIONS: "no_sessions", // conference sem sessões cadastradas
+  NO_ACTIVE: "no_active_session", // fora do horário de qualquer sessão
   ERROR: "error",
 };
 
@@ -21,8 +31,11 @@ export default function CheckinPage() {
   const [params] = useSearchParams();
   const memberId = params.get("m");
   const [state, setState] = useState(STATE.LOADING);
-  const [data, setData] = useState(null);
+  const [data, setData] = useState(null); // resposta do peek (member + session)
+  const [result, setResult] = useState(null); // resposta do commit
+  const [errorMsg, setErrorMsg] = useState("");
 
+  // Etapa 1 — peek: resolve delegado e sessão ativa (não grava).
   useEffect(() => {
     if (!memberId) {
       setState(STATE.NOT_FOUND);
@@ -36,16 +49,17 @@ export default function CheckinPage() {
         );
         const json = await res.json().catch(() => ({}));
         if (!alive) return;
-        if (res.status === 404 || json.status === "not_found") {
+        if (json.status === "ready") {
+          setData(json);
+          setState(STATE.CHOICE);
+        } else if (res.status === 404 || json.status === "not_found") {
           setState(STATE.NOT_FOUND);
-        } else if (json.status === "already_present") {
-          setData(json);
-          setState(STATE.ALREADY);
-        } else if (res.ok && json.status === "ok") {
-          setData(json);
-          setState(STATE.OK);
+        } else if (json.status === "no_sessions") {
+          setState(STATE.NO_SESSIONS);
+        } else if (json.status === "no_active_session") {
+          setState(STATE.NO_ACTIVE);
         } else {
-          setData(json);
+          setErrorMsg(json.message || "");
           setState(STATE.ERROR);
         }
       } catch {
@@ -57,55 +71,128 @@ export default function CheckinPage() {
     };
   }, [memberId]);
 
+  // Etapa 2 — commit: grava o status escolhido (P ou PV).
+  const choose = useCallback(
+    async (status) => {
+      setState(STATE.SUBMITTING);
+      setErrorMsg("");
+      try {
+        const res = await fetch("/api/checkin", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ m: memberId, source: "qr_web", status }),
+        });
+        const json = await res.json().catch(() => ({}));
+        if (res.ok && json.status === "ok") {
+          setResult(json);
+          setState(STATE.OK);
+        } else if (json.status === "no_active_session") {
+          // A sessão pode ter encerrado entre o peek e o toque.
+          setState(STATE.NO_ACTIVE);
+        } else if (json.status === "no_sessions") {
+          setState(STATE.NO_SESSIONS);
+        } else {
+          setErrorMsg(json.message || "");
+          setState(STATE.ERROR);
+        }
+      } catch {
+        setErrorMsg("");
+        setState(STATE.ERROR);
+      }
+    },
+    [memberId]
+  );
+
   return (
     <div style={wrap}>
       <div aria-hidden style={aurora} />
       <main style={card}>
         <div style={brand}>MUNConnect</div>
-        <Content state={state} data={data} />
+        <Content
+          state={state}
+          data={data}
+          result={result}
+          errorMsg={errorMsg}
+          onChoose={choose}
+        />
       </main>
     </div>
   );
 }
 
-function Content({ state, data }) {
+function Content({ state, data, result, errorMsg, onChoose }) {
   if (state === STATE.LOADING) {
     return (
       <div style={{ textAlign: "center" }}>
         <div style={dot} />
-        <p style={lead}>Registrando presença…</p>
+        <p style={lead}>Carregando…</p>
       </div>
     );
   }
 
+  // Etapa 1 concluída: escolha de P / PV.
+  if (state === STATE.CHOICE || state === STATE.SUBMITTING) {
+    const busy = state === STATE.SUBMITTING;
+    return (
+      <>
+        <h1 style={title}>Confirmar presença</h1>
+        <p style={lead}>
+          <strong style={{ color: "var(--text-primary)" }}>{data.memberName || "Delegado(a)"}</strong>
+          {data.memberCountry ? ` · ${data.memberCountry}` : ""}
+        </p>
+        {data.committeeName && <p style={sub}>{data.committeeName}</p>}
+        {data.session?.name && (
+          <p style={sessionPill}>{data.session.name}</p>
+        )}
+
+        {data.currentStatus && (
+          <p style={{ ...time, color: "var(--accent-400)" }}>
+            Você já marcou {statusLabel(data.currentStatus)} nesta sessão. Toque para alterar.
+          </p>
+        )}
+
+        <div style={choiceRow}>
+          <button
+            type="button"
+            onClick={() => onChoose("P")}
+            disabled={busy}
+            style={{ ...choiceBtn, ...pBtn, opacity: busy ? 0.55 : 1 }}
+          >
+            <span style={choiceGlyph}>🟢</span>
+            Presente
+            <span style={choiceTag}>P</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => onChoose("PV")}
+            disabled={busy}
+            style={{ ...choiceBtn, ...pvBtn, opacity: busy ? 0.55 : 1 }}
+          >
+            <span style={choiceGlyph}>🔵</span>
+            Presente e Votante
+            <span style={choiceTag}>PV</span>
+          </button>
+        </div>
+        {busy && <p style={{ ...time, textAlign: "center" }}>Registrando…</p>}
+      </>
+    );
+  }
+
   if (state === STATE.OK) {
+    const chosen = result?.chosenStatus;
     return (
       <>
         <Mark kind="ok" />
         <h1 style={title}>Presença registrada</h1>
         <p style={lead}>
-          Bem-vindo(a),{" "}
-          <strong style={{ color: "var(--text-primary)" }}>{data.memberName || "delegado(a)"}</strong>
-          {data.memberCountry ? `, delegado(a) de ${data.memberCountry}` : ""}
-          {data.committeeName ? ` no ${data.committeeName}` : ""}.
+          <strong style={{ color: "var(--text-primary)" }}>{result?.memberName || "Delegado(a)"}</strong>
+          {result?.committeeName ? ` · ${result.committeeName}` : ""}
         </p>
-        {data.checkinAt && (
-          <p style={time}>Horário: {formatTime(data.checkinAt)}</p>
-        )}
-      </>
-    );
-  }
-
-  if (state === STATE.ALREADY) {
-    return (
-      <>
-        <Mark kind="warn" />
-        <h1 style={title}>Você já fez check-in</h1>
-        <p style={lead}>
-          {data.memberName ? `${data.memberName}, ` : ""}sua presença já estava registrada
-          {data.checkinAt ? ` ${agoText(data.checkinAt)}` : ""}.
+        {result?.session?.name && <p style={sub}>{result.session.name}</p>}
+        <p style={{ ...statusBanner, ...(chosen === "PV" ? pvBanner : pBanner) }}>
+          {statusLabel(chosen)}
         </p>
-        {data.committeeName && <p style={sub}>Comitê {data.committeeName}</p>}
+        {result?.checkinAt && <p style={time}>Horário: {formatTime(result.checkinAt)}</p>}
       </>
     );
   }
@@ -116,8 +203,30 @@ function Content({ state, data }) {
         <Mark kind="err" />
         <h1 style={title}>QR não reconhecido</h1>
         <p style={lead}>
-          Este código não corresponde a nenhum delegado. Procure a organização do
-          evento.
+          Este código não corresponde a nenhum delegado. Procure a organização do evento.
+        </p>
+      </>
+    );
+  }
+
+  if (state === STATE.NO_SESSIONS) {
+    return (
+      <>
+        <Mark kind="warn" />
+        <h1 style={title}>Chamada indisponível</h1>
+        <p style={lead}>Sessões ainda não configuradas — procure a organização.</p>
+      </>
+    );
+  }
+
+  if (state === STATE.NO_ACTIVE) {
+    return (
+      <>
+        <Mark kind="warn" />
+        <h1 style={title}>Nenhuma chamada aberta</h1>
+        <p style={lead}>
+          Fora do horário de sessão — nenhuma chamada aberta no momento. Tente novamente quando a
+          sessão começar.
         </p>
       </>
     );
@@ -128,7 +237,7 @@ function Content({ state, data }) {
       <Mark kind="err" />
       <h1 style={title}>Não foi possível registrar</h1>
       <p style={lead}>
-        Tente novamente em instantes. Se persistir, procure a organização.
+        {errorMsg || "Tente novamente em instantes. Se persistir, procure a organização."}
       </p>
     </>
   );
@@ -163,20 +272,16 @@ function Mark({ kind }) {
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 
+function statusLabel(status) {
+  if (status === "PV") return "Presente e Votante (PV)";
+  if (status === "P") return "Presente (P)";
+  return "—";
+}
+
 function formatTime(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
-}
-
-function agoText(iso) {
-  const d = new Date(iso);
-  const mins = Math.max(0, Math.round((Date.now() - d.getTime()) / 60000));
-  if (mins < 1) return "agora há pouco";
-  if (mins === 1) return "há 1 minuto";
-  if (mins < 60) return `há ${mins} minutos`;
-  const h = Math.round(mins / 60);
-  return h === 1 ? "há 1 hora" : `há ${h} horas`;
 }
 
 /* ── Estilos ─────────────────────────────────────────────────────────────── */
@@ -231,11 +336,88 @@ const title = {
 
 const lead = { fontSize: "var(--fs-body)", margin: "0 0 6px", lineHeight: 1.5 };
 const sub = { fontSize: "var(--fs-small)", color: "var(--indigo-300)", margin: "2px 0 0", fontWeight: 600 };
+
+const sessionPill = {
+  display: "inline-block",
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--fs-tiny)",
+  letterSpacing: "0.04em",
+  color: "var(--text-secondary)",
+  background: "var(--bg-overlay)",
+  border: "1px solid var(--border)",
+  borderRadius: "var(--radius-badge)",
+  padding: "4px 12px",
+  margin: "12px 0 4px",
+};
+
 const time = {
   fontFamily: "var(--font-mono)",
   fontSize: "var(--fs-small)",
   color: "var(--text-muted)",
   margin: "14px 0 0",
+};
+
+const choiceRow = {
+  display: "flex",
+  gap: 12,
+  marginTop: 24,
+};
+
+const choiceBtn = {
+  flex: 1,
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: 8,
+  padding: "20px 12px",
+  borderRadius: "var(--radius-lg)",
+  fontSize: "var(--fs-small)",
+  fontWeight: 700,
+  lineHeight: 1.2,
+  cursor: "pointer",
+  transition: "transform 0.1s, filter 0.1s",
+};
+
+const pBtn = {
+  color: "var(--success)",
+  background: "color-mix(in srgb, var(--success) 12%, transparent)",
+  border: "2px solid color-mix(in srgb, var(--success) 55%, transparent)",
+};
+
+const pvBtn = {
+  color: "var(--accent-400)",
+  background: "color-mix(in srgb, var(--accent-400) 12%, transparent)",
+  border: "2px solid color-mix(in srgb, var(--accent-400) 55%, transparent)",
+};
+
+const choiceGlyph = { fontSize: 26, lineHeight: 1 };
+
+const choiceTag = {
+  fontFamily: "var(--font-mono)",
+  fontSize: "var(--fs-tiny)",
+  letterSpacing: "0.1em",
+  opacity: 0.85,
+};
+
+const statusBanner = {
+  display: "inline-block",
+  fontWeight: 700,
+  fontSize: "var(--fs-small)",
+  borderRadius: "var(--radius-badge)",
+  padding: "6px 16px",
+  margin: "14px 0 0",
+};
+
+const pBanner = {
+  color: "var(--success)",
+  background: "color-mix(in srgb, var(--success) 14%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--success) 45%, transparent)",
+};
+
+const pvBanner = {
+  color: "var(--accent-400)",
+  background: "color-mix(in srgb, var(--accent-400) 14%, transparent)",
+  border: "1px solid color-mix(in srgb, var(--accent-400) 45%, transparent)",
 };
 
 const dot = {

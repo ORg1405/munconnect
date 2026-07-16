@@ -11,6 +11,7 @@ import DebateTrainer from "./components/DebateTrainer";
 import ConferencePage from "./components/conference/ConferencePage";
 import CommitteePage from "./components/conference/CommitteePage";
 import ImportMembers from "./components/admin/ImportMembers";
+import Sessions from "./components/admin/Sessions";
 import CheckinPage from "./pages/CheckinPage";
 
 function ProtectedRoute({ children }) {
@@ -44,6 +45,7 @@ export default function App() {
             <Route path="/app" element={<Home />} />
             <Route path="/app/comites" element={<Committees />} />
             <Route path="/app/importar" element={<ImportMembers />} />
+            <Route path="/app/sessoes" element={<Sessions />} />
             <Route path="/app/motion" element={<MotionGenerator />} />
             <Route path="/app/debate" element={<DebateTrainer />} />
             <Route path="/app/pending" element={<ComingSoon title="Revisão Pendente" />} />
