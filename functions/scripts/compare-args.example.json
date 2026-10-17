@@ -1,0 +1,16 @@
+{
+  "committeeId": "SOLIDARNOSC",
+  "locale": "pt-BR",
+  "setup": {
+    "committeeName": "PLACEHOLDER — nome do comitê",
+    "topic": "PLACEHOLDER — tópico do debate",
+    "userCountry": { "code2": "AA", "name": "PLACEHOLDER — delegação do aluno" },
+    "aiDelegation": { "code2": "BB", "name": "PLACEHOLDER — delegação oponente" },
+    "difficulty": "advanced"
+  },
+  "arguments": [
+    "A delegação solicita uma moderated caucus de 10 minutos, com tempo de fala de 60 segundos, para discutir o tópico.",
+    "Esta delegação entende que a posição apresentada pelo oponente ignora as consequências humanitárias e pede que ele explique como pretende resolvê-las.",
+    "Point of information: a delegação oponente pode citar um precedente concreto que sustente sua última afirmação?"
+  ]
+}

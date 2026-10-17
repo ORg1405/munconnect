@@ -148,6 +148,32 @@ service cloud.firestore {
       }
     }
 
+    // ── Treino de debate com IA (Cloud Functions debateTurn/debateReport) ─────
+    // Escritos SÓ pelas Cloud Functions (Admin SDK, ignora estas rules): o
+    // cliente lê apenas os próprios debates/turnos (incl. análise e relatório)
+    // e nunca escreve — nem turnos, nem contadores de uso/cota.
+    match /debates/{debateId} {
+      allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow write: if false;
+
+      match /turns/{turnId} {
+        allow read: if isSignedIn() &&
+          get(/databases/$(database)/documents/debates/$(debateId)).data.uid == request.auth.uid;
+        allow write: if false;
+      }
+    }
+
+    // Cotas/uso por usuário: o dono pode ler (mostrar "debates restantes hoje").
+    match /usage/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow write: if false;
+
+      match /days/{day} {
+        allow read: if isSignedIn() && request.auth.uid == uid;
+        allow write: if false;
+      }
+    }
+
     // ── Default deny ───────────────────────────────────────────────────────────
     // Qualquer caminho não coberto acima: sem leitura e sem escrita.
     match /{document=**} {

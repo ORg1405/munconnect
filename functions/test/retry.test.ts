@@ -1,0 +1,227 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// ── Gemini mockado: substitui o SDK @google/genai inteiro ────────────────────
+const generateContent = vi.fn();
+const generateContentStream = vi.fn();
+vi.mock("@google/genai", () => ({
+  GoogleGenAI: class {
+    models = { generateContent, generateContentStream };
+  },
+}));
+
+const { GeminiProvider, toLLMError } = await import("../src/llm/gemini.js");
+const { callModel } = await import("../src/llm/router.js");
+const { backoffDelay, withRetryAndFallback } = await import("../src/llm/retry.js");
+const { LLMError } = await import("../src/llm/provider.js");
+const { Semaphore, SemaphoreTimeoutError } = await import("../src/llm/semaphore.js");
+const { RETRY, ROLES } = await import("../src/config.js");
+const { estimateCostUsd } = await import("../src/telemetry.js");
+
+function apiError(status: number) {
+  return Object.assign(new Error(`HTTP ${status}`), { status });
+}
+
+function okResponse(text: string, model = "gemini-3.1-flash-lite") {
+  return {
+    text,
+    modelVersion: model,
+    candidates: [{ finishReason: "STOP" }],
+    usageMetadata: { promptTokenCount: 1000, candidatesTokenCount: 100, thoughtsTokenCount: 50, cachedContentTokenCount: 400 },
+  };
+}
+
+async function* streamOf(...pieces: string[]) {
+  for (const [i, p] of pieces.entries()) {
+    yield {
+      text: p,
+      modelVersion: "gemini-3.1-flash-lite",
+      candidates: [{ finishReason: i === pieces.length - 1 ? "STOP" : undefined }],
+      usageMetadata: i === pieces.length - 1 ? { promptTokenCount: 10, candidatesTokenCount: 5 } : undefined,
+    };
+  }
+}
+
+const sleeps: number[] = [];
+const retryDeps = { sleep: async (ms: number) => void sleeps.push(ms), random: () => 0.5 };
+const provider = new GeminiProvider("test-key");
+const base = { systemInstruction: "SYS", userContent: "USER", retryDeps };
+
+beforeEach(() => {
+  generateContent.mockReset();
+  generateContentStream.mockReset();
+  sleeps.length = 0;
+});
+
+describe("backoffDelay", () => {
+  it("1 s, 2 s, 4 s, 8 s sem jitter (random = 0.5)", () => {
+    expect([1, 2, 3, 4].map((a) => backoffDelay(a, RETRY, () => 0.5))).toEqual([1000, 2000, 4000, 8000]);
+  });
+
+  it("jitter fica em ±30% e respeita o teto de 8 s", () => {
+    expect(backoffDelay(1, RETRY, () => 0)).toBe(700);
+    expect(backoffDelay(1, RETRY, () => 0.9999)).toBeLessThanOrEqual(1300);
+    expect(backoffDelay(10, RETRY, () => 0.5)).toBe(8000);
+  });
+});
+
+describe("callModel com Gemini mockado", () => {
+  it("sucesso de primeira: sem espera, usa o modelo principal e calcula custo com cache", async () => {
+    generateContent.mockResolvedValueOnce(okResponse("réplica"));
+    const r = await callModel(provider, { role: "opponent", ...base });
+    expect(r.text).toBe("réplica");
+    expect(r.usedFallback).toBe(false);
+    expect(sleeps).toEqual([]);
+    expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 100, thoughtsTokens: 50, cachedTokens: 400 });
+    // 600 × 0.25 + 400 × 0.025 + 150 × 1.5 (por 1M)
+    expect(r.costUsd).toBeCloseTo((600 * 0.25 + 400 * 0.025 + 150 * 1.5) / 1e6, 9);
+    const req = generateContent.mock.calls[0][0];
+    expect(req.model).toBe(ROLES.opponent.model);
+    expect(req.config.systemInstruction).toBe("SYS");
+    expect(req.config.thinkingConfig).toEqual({ thinkingLevel: "LOW" });
+    expect(req.config.safetySettings.length).toBeGreaterThan(0);
+  });
+
+  it("429/503 → retry com backoff 1 s, 2 s e sucesso na 3ª tentativa", async () => {
+    generateContent.mockRejectedValueOnce(apiError(429)).mockRejectedValueOnce(apiError(503)).mockResolvedValueOnce(okResponse("ok"));
+    const r = await callModel(provider, { role: "opponent", ...base });
+    expect(r.text).toBe("ok");
+    expect(sleeps).toEqual([1000, 2000]);
+    expect(generateContent).toHaveBeenCalledTimes(3);
+    expect(r.usedFallback).toBe(false);
+  });
+
+  it("4 falhas no principal → cai no modelo de reserva", async () => {
+    generateContent
+      .mockRejectedValueOnce(apiError(429))
+      .mockRejectedValueOnce(apiError(429))
+      .mockRejectedValueOnce(apiError(503))
+      .mockRejectedValueOnce(apiError(429))
+      .mockResolvedValueOnce(okResponse("reserva", ROLES.opponent.fallbackModel!));
+    const r = await callModel(provider, { role: "opponent", ...base });
+    expect(r.text).toBe("reserva");
+    expect(r.usedFallback).toBe(true);
+    expect(sleeps).toEqual([1000, 2000, 4000]);
+    const models = generateContent.mock.calls.map((c) => c[0].model);
+    expect(models).toEqual([...Array(RETRY.maxAttempts).fill(ROLES.opponent.model), ROLES.opponent.fallbackModel]);
+  });
+
+  it("principal e reserva esgotados → LLMError transitório (vira 'tente de novo')", async () => {
+    generateContent.mockRejectedValue(apiError(503));
+    await expect(callModel(provider, { role: "opponent", ...base })).rejects.toMatchObject({ kind: "unavailable", retryable: true });
+    expect(generateContent).toHaveBeenCalledTimes(RETRY.maxAttempts + RETRY.fallbackMaxAttempts);
+  });
+
+  it("erro não-transitório (400) não é re-tentado", async () => {
+    generateContent.mockRejectedValueOnce(apiError(400));
+    await expect(callModel(provider, { role: "opponent", ...base })).rejects.toMatchObject({ kind: "bad_request" });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("bloqueio de segurança não é re-tentado e expõe só as categorias", async () => {
+    generateContent.mockResolvedValueOnce({
+      text: "",
+      candidates: [{ finishReason: "SAFETY", safetyRatings: [{ category: "HARM_CATEGORY_HATE_SPEECH", probability: "HIGH", blocked: true }] }],
+      usageMetadata: {},
+    });
+    const err = await callModel(provider, { role: "opponent", ...base }).catch((e) => e);
+    expect(err).toBeInstanceOf(LLMError);
+    expect(err.kind).toBe("blocked");
+    expect(err.blockInfo).toEqual({ reason: "SAFETY", categories: ["HARM_CATEGORY_HATE_SPEECH"] });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("streaming: entrega chunks e re-tenta se falhar ANTES do primeiro chunk", async () => {
+    generateContentStream.mockRejectedValueOnce(apiError(429)).mockResolvedValueOnce(streamOf("Olá, ", "delegado."));
+    const chunks: string[] = [];
+    const r = await callModel(provider, { role: "opponent", ...base, onChunk: (c) => void chunks.push(c) });
+    expect(chunks).toEqual(["Olá, ", "delegado."]);
+    expect(r.text).toBe("Olá, delegado.");
+    expect(sleeps).toEqual([1000]);
+  });
+
+  it("streaming: falha DEPOIS de entregar texto não é re-tentada", async () => {
+    async function* broken() {
+      yield { text: "parcial", candidates: [{}] };
+      throw apiError(503);
+    }
+    generateContentStream.mockResolvedValueOnce(broken());
+    const err = await callModel(provider, { role: "opponent", ...base, onChunk: () => undefined }).catch((e) => e);
+    expect(err.partialOutput).toBe(true);
+    expect(generateContentStream).toHaveBeenCalledTimes(1);
+  });
+
+  it("saída estruturada: passa o JSON Schema como responseJsonSchema", async () => {
+    generateContent.mockResolvedValueOnce(okResponse('{"ok":true}'));
+    const schema = { type: "object", properties: { ok: { type: "boolean" } } };
+    await callModel(provider, { role: "turnAnalysis", ...base, responseJsonSchema: schema });
+    const cfg = generateContent.mock.calls[0][0].config;
+    expect(cfg.responseMimeType).toBe("application/json");
+    expect(cfg.responseJsonSchema).toBe(schema);
+  });
+
+  it("resumo usa thinking 'minimal' no Flash-Lite (chamada barata)", async () => {
+    generateContent.mockResolvedValueOnce(okResponse("x"));
+    await callModel(provider, { role: "summary", ...base });
+    expect(generateContent.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
+  });
+});
+
+describe("toLLMError", () => {
+  it("classifica erros do SDK e de rede", () => {
+    expect(toLLMError(apiError(429))).toMatchObject({ kind: "rate_limit", retryable: true });
+    expect(toLLMError(apiError(503))).toMatchObject({ kind: "unavailable", retryable: true });
+    expect(toLLMError(apiError(500))).toMatchObject({ kind: "other", retryable: false });
+    expect(toLLMError(new TypeError("fetch failed"))).toMatchObject({ kind: "network", retryable: true });
+  });
+});
+
+describe("withRetryAndFallback sem modelo de reserva", () => {
+  it("propaga o último erro", async () => {
+    const call = vi.fn().mockRejectedValue(new LLMError("x", { kind: "rate_limit", status: 429, retryable: true }));
+    await expect(
+      withRetryAndFallback(call, { model: "m", fallbackModel: null, policy: RETRY, fallbackAttempts: 2, deps: retryDeps }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(call).toHaveBeenCalledTimes(RETRY.maxAttempts);
+  });
+});
+
+describe("Semaphore", () => {
+  it("limita concorrência e libera na ordem", async () => {
+    const s = new Semaphore(2);
+    const r1 = await s.acquire();
+    const r2 = await s.acquire();
+    let third = false;
+    const p3 = s.acquire().then((r) => ((third = true), r));
+    await Promise.resolve();
+    expect(third).toBe(false);
+    expect(s.queued).toBe(1);
+    r1();
+    const r3 = await p3;
+    expect(third).toBe(true);
+    expect(s.inUse).toBe(2);
+    r2();
+    r3();
+    expect(s.inUse).toBe(0);
+  });
+
+  it("estoura timeout quando a fila não anda", async () => {
+    const s = new Semaphore(1);
+    await s.acquire();
+    await expect(s.acquire(10)).rejects.toBeInstanceOf(SemaphoreTimeoutError);
+    expect(s.queued).toBe(0);
+  });
+});
+
+describe("estimateCostUsd", () => {
+  const usage = { inputTokens: 1_000_000, outputTokens: 1_000_000, thoughtsTokens: 0, cachedTokens: 0 };
+  it("3.8 Flash dobra de preço em 01/01/2027", () => {
+    expect(estimateCostUsd("gemini-3.8-flash", usage, "standard", new Date("2026-12-31T12:00:00Z"))).toBeCloseTo(4.5);
+    expect(estimateCostUsd("gemini-3.8-flash", usage, "standard", new Date("2027-01-01T12:00:00Z"))).toBeCloseTo(9);
+  });
+  it("Flex custa metade", () => {
+    expect(estimateCostUsd("gemini-3.8-flash", usage, "flex", new Date("2026-12-31T12:00:00Z"))).toBeCloseTo(2.25);
+  });
+  it("modelo sem preço configurado → 0", () => {
+    expect(estimateCostUsd("modelo-desconhecido", usage, "standard")).toBe(0);
+  });
+});

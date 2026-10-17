@@ -1,0 +1,28 @@
+{
+  "name": "munconnect-functions",
+  "private": true,
+  "type": "module",
+  "main": "lib/index.js",
+  "engines": {
+    "node": "22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.dev.json",
+    "serve": "npm run build && firebase emulators:start --only functions,firestore,auth",
+    "compare": "tsx scripts/compare-opponent.ts"
+  },
+  "dependencies": {
+    "@google/genai": "2.27.0",
+    "firebase-admin": "14.5.0",
+    "firebase-functions": "7.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "vitest": "5.0.3"
+  }
+}

@@ -61,6 +61,14 @@ export const MUN_COMMITTEES = [
       "Return and reintegration in post-conflict states",
     ],
   },
+  {
+    // PLACEHOLDER: tópico e dossiê reais ainda não definidos. O dossiê usado
+    // pelo backend de IA fica em functions/src/dossiers/SOLIDARNOSC.md.
+    id: "SOLIDARNOSC",
+    name: "Solidarność (PLACEHOLDER)",
+    short: "SOLIDARNOSC",
+    topics: ["PLACEHOLDER — tópico a definir"],
+  },
 ];
 
 export function findCommitteeById(id) {
