@@ -18,7 +18,7 @@ import { getApps, initializeApp } from "firebase-admin/app";
 import { FieldValue, Timestamp, getFirestore, type DocumentReference, type Firestore } from "firebase-admin/firestore";
 import { HttpsError } from "firebase-functions/v2/https";
 import { QUOTA } from "./config.js";
-import type { DebateSetup, TurnRecord } from "./context.js";
+import { shouldAnalyzeTurn, type DebateSetup, type TurnRecord } from "./context.js";
 import { quotaError } from "./errors.js";
 import type { LLMUsage } from "./llm/provider.js";
 import { checkTurnQuota, type QuotaRemaining } from "./quota.js";
@@ -58,6 +58,7 @@ export interface DebateDoc {
   usage: LLMUsage & { costUsd: number; calls: number };
   reportStatus: null | "generating" | "done" | "error";
   reportStartedAt?: Timestamp | null;
+  reportError?: { reason: string; detalhe: string | null } | null;
   report?: unknown;
 }
 
@@ -207,6 +208,7 @@ export async function completeTurn(args: {
   opponentText: string;
   model: string;
   usedFallback: boolean;
+  truncated: boolean;
   usage: LLMUsage;
   costUsd: number;
   latencyMs: number;
@@ -219,11 +221,13 @@ export async function completeTurn(args: {
     opponentText: args.opponentText,
     model: args.model,
     usedFallback: args.usedFallback,
+    truncated: args.truncated,
     usage: args.usage,
     costUsd: args.costUsd,
     latencyMs: args.latencyMs,
     createdAt: FieldValue.serverTimestamp(),
-    analysisStatus: "pending",
+    // "skipped" = fora da cadência ANALYSIS.analyzeEveryTurns (o trigger ignora).
+    analysisStatus: shouldAnalyzeTurn(r.turnIndex) ? "pending" : "skipped",
   });
   batch.update(paths.debate(r.debateId), {
     pendingTurn: null,
@@ -315,7 +319,13 @@ export async function reserveReport(uid: string, debateId: string, now: Date): P
         { reason: "too-few-turns" },
       );
     }
-    tx.update(ref, { reportStatus: "generating", reportStartedAt: Timestamp.fromDate(now), updatedAt: Timestamp.fromDate(now) });
+    // A UI acompanha este campo por onSnapshot (rules: o dono lê o debate).
+    tx.update(ref, {
+      reportStatus: "generating",
+      reportStartedAt: Timestamp.fromDate(now),
+      reportError: null,
+      updatedAt: Timestamp.fromDate(now),
+    });
     return { kind: "reserved", debate: d, dayKey: dayKey(now, QUOTA.timeZone) } as const;
   });
 }
@@ -334,6 +344,7 @@ export async function saveReport(args: {
     report: args.report,
     reportModel: args.model,
     reportStatus: "done",
+    reportError: null,
     status: "finished",
     finishedAt: FieldValue.serverTimestamp(),
     updatedAt: FieldValue.serverTimestamp(),
@@ -347,6 +358,12 @@ export async function saveReport(args: {
   await batch.commit();
 }
 
-export async function failReport(debateId: string): Promise<void> {
-  await paths.debate(debateId).update({ reportStatus: "error", updatedAt: FieldValue.serverTimestamp() });
+// reason: "model-busy" | "blocked" | "TRANSCRIPT_INVALIDA" | "internal" — a UI
+// pode oferecer "tentar de novo" (nova chamada a debateReport).
+export async function failReport(debateId: string, reason: string, detalhe: string | null = null): Promise<void> {
+  await paths.debate(debateId).update({
+    reportStatus: "error",
+    reportError: { reason, detalhe },
+    updatedAt: FieldValue.serverTimestamp(),
+  });
 }

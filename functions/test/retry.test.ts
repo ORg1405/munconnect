@@ -159,6 +159,14 @@ describe("callModel com Gemini mockado", () => {
     expect(cfg.responseJsonSchema).toBe(schema);
   });
 
+  it("finishReason MAX_TOKENS marca a resposta como truncada", async () => {
+    generateContent.mockResolvedValueOnce({ ...okResponse("cortad"), candidates: [{ finishReason: "MAX_TOKENS" }] });
+    const r = await callModel(provider, { role: "opponent", ...base });
+    expect(r.truncated).toBe(true);
+    generateContent.mockResolvedValueOnce(okResponse("inteira"));
+    expect((await callModel(provider, { role: "opponent", ...base })).truncated).toBe(false);
+  });
+
   it("resumo usa thinking 'minimal' no Flash-Lite (chamada barata)", async () => {
     generateContent.mockResolvedValueOnce(okResponse("x"));
     await callModel(provider, { role: "summary", ...base });
@@ -171,6 +179,11 @@ describe("toLLMError", () => {
     expect(toLLMError(apiError(429))).toMatchObject({ kind: "rate_limit", retryable: true });
     expect(toLLMError(apiError(503))).toMatchObject({ kind: "unavailable", retryable: true });
     expect(toLLMError(apiError(500))).toMatchObject({ kind: "other", retryable: false });
+    // Deadline estourado no servidor (httpOptions.timeout) volta como 504.
+    expect(toLLMError(apiError(504))).toMatchObject({ kind: "timeout", retryable: true });
+    // Timeout local do SDK: DOMException AbortError (code 20 não é status HTTP).
+    const abort = Object.assign(new Error("This operation was aborted"), { name: "AbortError", code: 20 });
+    expect(toLLMError(abort)).toMatchObject({ kind: "timeout", retryable: true });
     expect(toLLMError(new TypeError("fetch failed"))).toMatchObject({ kind: "network", retryable: true });
   });
 });
@@ -179,9 +192,82 @@ describe("withRetryAndFallback sem modelo de reserva", () => {
   it("propaga o último erro", async () => {
     const call = vi.fn().mockRejectedValue(new LLMError("x", { kind: "rate_limit", status: 429, retryable: true }));
     await expect(
-      withRetryAndFallback(call, { model: "m", fallbackModel: null, policy: RETRY, fallbackAttempts: 2, deps: retryDeps }),
+      withRetryAndFallback(call, { model: "m", fallbackModel: null, policy: RETRY, fallbackAttempts: 2, deadlineMs: 600_000, deps: retryDeps }),
     ).rejects.toMatchObject({ status: 429 });
     expect(call).toHaveBeenCalledTimes(RETRY.maxAttempts);
+  });
+});
+
+describe("orçamento total de tempo (deadlineMs)", () => {
+  it("não inicia tentativa sem tempo e limita o timeout da última ao que resta", async () => {
+    // Relógio falso: cada chamada ao modelo "leva" 40 s e falha com 503.
+    let clock = 0;
+    const deps = {
+      now: () => clock,
+      random: () => 0.5,
+      sleep: async (ms: number) => void (clock += ms),
+    };
+    generateContent.mockImplementation(async () => {
+      clock += 40_000;
+      throw apiError(503);
+    });
+    await expect(callModel(provider, { role: "opponent", ...base, retryDeps: deps })).rejects.toMatchObject({ kind: "unavailable" });
+    // opponent: deadline 100 s, 25 s reservados à reserva, timeout 30 s/tentativa.
+    // t=0 → principal #1 (falha em 40) · espera 1 s · t=41 → principal #2 (falha em 81)
+    // principal sem orçamento (100 − 81 − 25 < 10) → reserva com os 19 s que
+    // sobraram (falha em 121) → acabou o orçamento.
+    const timeouts = generateContent.mock.calls.map((c) => c[0].config.httpOptions.timeout);
+    expect(timeouts).toEqual([30_000, 30_000, 19_000]);
+    const models = generateContent.mock.calls.map((c) => c[0].model);
+    expect(models).toEqual([ROLES.opponent.model, ROLES.opponent.model, ROLES.opponent.fallbackModel]);
+  });
+
+  it("modelo principal lento não consome a reserva: o fallback sempre tem sua vez", async () => {
+    // Relatório: cada tentativa no 3.8 Flash estoura o timeout inteiro (504).
+    let clock = 0;
+    const deps = { now: () => clock, random: () => 0.5, sleep: async (ms: number) => void (clock += ms) };
+    generateContent.mockImplementation(async (req: { model: string; config: { httpOptions: { timeout: number } } }) => {
+      if (req.model === ROLES.report.model) {
+        clock += req.config.httpOptions.timeout;
+        throw apiError(504);
+      }
+      clock += 4000;
+      return okResponse('{"ok":true}', req.model);
+    });
+    const r = await callModel(provider, { role: "report", ...base, retryDeps: deps });
+    expect(r.usedFallback).toBe(true);
+    expect(clock).toBeLessThanOrEqual(ROLES.report.deadlineMs);
+    const lastCall = generateContent.mock.calls.at(-1)![0];
+    expect(lastCall.model).toBe(ROLES.report.fallbackModel);
+    expect(lastCall.config.httpOptions.timeout).toBeGreaterThanOrEqual(ROLES.report.fallbackReserveMs - 1000);
+  });
+
+  it("nenhuma tentativa usa timeout abaixo de 10 s (a API recusa com 400)", async () => {
+    let clock = 0;
+    const deps = { now: () => clock, random: () => 0.5, sleep: async (ms: number) => void (clock += ms) };
+    generateContent.mockImplementation(async (req: { config: { httpOptions: { timeout: number } } }) => {
+      clock += Math.min(req.config.httpOptions.timeout, 13_000);
+      throw apiError(503);
+    });
+    await callModel(provider, { role: "opponent", ...base, retryDeps: deps }).catch(() => undefined);
+    const timeouts = generateContent.mock.calls.map((c) => c[0].config.httpOptions.timeout);
+    expect(timeouts.length).toBeGreaterThan(2);
+    expect(Math.min(...timeouts)).toBeGreaterThanOrEqual(RETRY.minAttemptMs);
+  });
+
+  it("o orçamento de cada papel cabe no timeout da função que o chama", async () => {
+    const { FUNCTIONS, QUOTA } = await import("../src/config.js");
+    expect(ROLES.opponent.deadlineMs).toBeLessThan(FUNCTIONS.debateTurn.timeoutSeconds * 1000);
+    expect(ROLES.turnAnalysis.deadlineMs).toBeLessThan(FUNCTIONS.onTurnCreated.timeoutSeconds * 1000);
+    expect(ROLES.summary.deadlineMs).toBeLessThan(FUNCTIONS.onTurnCreated.timeoutSeconds * 1000);
+    expect(ROLES.report.deadlineMs).toBeLessThan(FUNCTIONS.debateReport.timeoutSeconds * 1000);
+    expect(FUNCTIONS.debateReport.timeoutSeconds).toBeGreaterThanOrEqual(180);
+    expect(QUOTA.turnLockSeconds).toBeGreaterThan(FUNCTIONS.debateTurn.timeoutSeconds);
+    expect(QUOTA.reportLockSeconds).toBeGreaterThan(FUNCTIONS.debateReport.timeoutSeconds);
+  });
+
+  it("análise usa um modelo diferente do oponente (outro pool de limite)", () => {
+    expect(ROLES.turnAnalysis.model).not.toBe(ROLES.opponent.model);
   });
 });
 

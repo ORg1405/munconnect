@@ -35,6 +35,15 @@ export class GeminiProvider implements LLMProvider {
     };
   }
 
+  async countTokens(model: string, text: string): Promise<number> {
+    try {
+      const res = await this.ai.models.countTokens({ model, contents: text });
+      return res.totalTokens ?? 0;
+    } catch (err) {
+      throw toLLMError(err);
+    }
+  }
+
   async stream(req: LLMRequest, onChunk: (text: string) => void | Promise<void>): Promise<LLMResult> {
     let text = "";
     let last: GenerateContentResponse | null = null;
@@ -123,6 +132,8 @@ export function toLLMError(err: unknown): LLMError {
   const message = String(anyErr?.message ?? err);
   if (status === 429) return new LLMError(message, { kind: "rate_limit", status, retryable: true });
   if (status === 503) return new LLMError(message, { kind: "unavailable", status, retryable: true });
+  // httpOptions.timeout também vira deadline no servidor: estourou → 504 DEADLINE_EXCEEDED.
+  if (status === 504) return new LLMError(message, { kind: "timeout", status, retryable: true });
   if (status === 400 || status === 404) return new LLMError(message, { kind: "bad_request", status });
   if (anyErr?.name === "AbortError" || /timed? ?out|aborted/i.test(message)) {
     return new LLMError(message, { kind: "timeout", status, retryable: true });

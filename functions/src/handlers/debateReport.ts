@@ -2,6 +2,12 @@
 // Usa a transcrição salva no servidor — o cliente só manda { debateId }.
 // Saída: { debateId, report, cached, model?, usage? }
 // O prompt é o do avaliador original (prompts/report.ts) + responseJsonSchema.
+//
+// Estado para a UI (debates/{id}, lido por onSnapshot pelo dono):
+//   reportStatus: null → "generating" (reportStartedAt) → "done" (report)
+//                                                       ↘ "error" (reportError.reason)
+// Leva ~1–2 min. Se o cliente desistir de esperar a chamada (timeout dele),
+// a função continua e grava o resultado — a UI só precisa seguir o status.
 
 import { HttpsError, type CallableRequest } from "firebase-functions/v2/https";
 import { buildReportPrompt, loadDossier } from "../context.js";
@@ -33,7 +39,7 @@ export async function handleDebateReport(request: CallableRequest<unknown>) {
 
     const parsed = parseReport(result.text);
     if ("erro" in parsed) {
-      await failReport(debateId);
+      await failReport(debateId, "TRANSCRIPT_INVALIDA", parsed.detalhe);
       throw new HttpsError("failed-precondition", "Não foi possível avaliar esta sessão: a transcrição foi considerada insuficiente.", {
         reason: "TRANSCRIPT_INVALIDA",
         detalhe: parsed.detalhe,
@@ -58,8 +64,10 @@ export async function handleDebateReport(request: CallableRequest<unknown>) {
     };
   } catch (err) {
     if (err instanceof HttpsError) throw err;
-    await failReport(debateId).catch(() => undefined);
-    throw toHttpsError(err, "debate_report");
+    const httpsErr = toHttpsError(err, "debate_report");
+    const reason = (httpsErr.details as { reason?: string } | undefined)?.reason ?? "internal";
+    await failReport(debateId, reason).catch(() => undefined);
+    throw httpsErr;
   }
 }
 

@@ -53,3 +53,11 @@ export function logFailedAttempt(e: { role: Role; model: string; attempt: number
 export function logBlocked(e: { role: Role; model: string; reason: string; categories: string[]; debateId?: string }): void {
   logger.warn("llm_blocked", e);
 }
+
+export function logCallFailed(e: { role: Role; kind: string; status: number | null; debateId?: string }): void {
+  logger.error("llm_call_failed", e);
+}
+
+export function logTruncated(e: { role: Role; model: string; outputTokens: number; thoughtsTokens: number; maxOutputTokens: number; debateId?: string }): void {
+  logger.warn("llm_truncated", e);
+}

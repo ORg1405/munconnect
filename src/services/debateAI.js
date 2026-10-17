@@ -7,11 +7,22 @@
 // cota restante). Erros viram DebateAIError com mensagem pronta para a UI.
 
 import { httpsCallable } from "firebase/functions";
-import { functions } from "../firebase";
+import { doc, onSnapshot } from "firebase/firestore";
+import { db, functions } from "../firebase";
 
-const debateTurnFn = httpsCallable(functions, "debateTurn");
-// O relatório pode levar mais de 1 min (modelo mais forte).
-const debateReportFn = httpsCallable(functions, "debateReport", { timeout: 300_000 });
+// Timeouts do CLIENTE — acompanham functions/src/config.ts (FUNCTIONS.*.timeoutSeconds).
+// debateTurn: função 120 s (o SDK usa 70 s por padrão — curto demais com retry).
+const TURN_TIMEOUT_MS = 125_000;
+// debateReport: função 300 s (relatório leva ~1–2 min). Se o relatório passar
+// para Flex (função 1800 s), NÃO precisa mudar: estourando este timeout, a UI
+// continua acompanhando o status pelo Firestore (subscribeReportStatus).
+export const REPORT_TIMEOUT_MS = 310_000;
+// Trava do servidor (QUOTA.reportLockSeconds = 300 + 60 s): um "generating" mais
+// velho que isso ficou preso (instância caiu) — a UI pode oferecer "tentar de novo".
+export const REPORT_STALE_AFTER_MS = 360_000;
+
+const debateTurnFn = httpsCallable(functions, "debateTurn", { timeout: TURN_TIMEOUT_MS });
+const debateReportFn = httpsCallable(functions, "debateReport", { timeout: REPORT_TIMEOUT_MS });
 
 export class DebateAIError extends Error {
   constructor({ code, message, reason, resetsAt, retryAfterSeconds, detalhe }) {
@@ -92,4 +103,41 @@ export async function requestDebateReport(debateId) {
   } catch (err) {
     throw toDebateAIError(err);
   }
+}
+
+// Erros em que o relatório pode estar (ou continuar) sendo gerado no servidor:
+// a UI deve seguir o status pelo Firestore em vez de mostrar falha.
+export function isReportStillRunning(err) {
+  return (
+    err?.reason === "report-in-progress" ||
+    err?.code === "deadline-exceeded" || // timeout do cliente; a função segue rodando
+    err?.code === "cancelled"
+  );
+}
+
+/**
+ * Acompanha o status do relatório em debates/{debateId} (as rules deixam o
+ * dono ler). cb recebe:
+ *   { status: "idle" | "generating" | "done" | "error",
+ *     report, startedAt: Date|null, error: { reason, detalhe }|null, stale: boolean }
+ * `stale` = "generating" há mais que REPORT_STALE_AFTER_MS (execução morreu).
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeReportStatus(debateId, cb, onError) {
+  return onSnapshot(
+    doc(db, "debates", debateId),
+    (snap) => {
+      const d = snap.data() || {};
+      const startedAt = d.reportStartedAt?.toDate?.() ?? null;
+      const status = d.reportStatus ?? "idle";
+      cb({
+        status,
+        report: d.report ?? null,
+        startedAt,
+        error: d.reportError ?? null,
+        stale: status === "generating" && !!startedAt && Date.now() - startedAt.getTime() > REPORT_STALE_AFTER_MS,
+      });
+    },
+    onError,
+  );
 }

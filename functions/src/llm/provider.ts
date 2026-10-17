@@ -67,6 +67,8 @@ export interface LLMProvider {
   generate(req: LLMRequest): Promise<LLMResult>;
   // onChunk recebe cada pedaço de texto visível à medida que chega.
   stream(req: LLMRequest, onChunk: (text: string) => void | Promise<void>): Promise<LLMResult>;
+  // Conta tokens de um texto no tokenizador do modelo (diagnóstico do prefixo).
+  countTokens(model: string, text: string): Promise<number>;
 }
 
 export function emptyUsage(): LLMUsage {

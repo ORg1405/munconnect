@@ -10,6 +10,43 @@ import type { SafetySetting } from "./llm/provider.js";
 // trigger da análise por turno e reduz latência para usuários no Brasil.
 export const REGION = "southamerica-east1";
 
+// ── Modelos ──────────────────────────────────────────────────────────────────
+// IDs confirmados com chamada real à Gemini API em 2026-10-17
+// (models.list + generateContent): gemini-3.1-flash-lite, gemini-3.5-flash-lite,
+// gemini-3.8-flash.
+//
+// ATENÇÃO: o preço do gemini-3.8-flash DOBRA em 01/01/2027 (input, output e
+// cache). Ver PRICES abaixo antes de trocar o oponente para ele.
+export const MODEL_IDS = {
+  flashLite31: "gemini-3.1-flash-lite",
+  flashLite35: "gemini-3.5-flash-lite",
+  flash38: "gemini-3.8-flash",
+} as const;
+
+// Tier do relatório final. "flex" = 50% mais barato, mas latência de minutos
+// (capacidade ociosa, sem garantia). Trocar aqui ajusta sozinho o timeout por
+// tentativa, o orçamento de retry e o timeoutSeconds da função debateReport.
+// O cliente não precisa mudar: se a chamada passar do timeout dele, a UI segue
+// acompanhando o status pelo Firestore (ver src/services/debateAI.js).
+const REPORT_SERVICE_TIER = "standard" as "standard" | "flex";
+
+// ── Cloud Functions: escala e timeouts ───────────────────────────────────────
+// Cálculo de pico (200 alunos) em functions/README.md → "Capacidade (RPM)".
+// Pior caso ≈ 600 turnos/min → ~30–40 chamadas simultâneas ao oponente;
+// 10 instâncias × 40 dão folga.
+export const FUNCTIONS = {
+  debateTurn: { concurrency: 40, maxInstances: 10, timeoutSeconds: 120, memory: "512MiB" },
+  // O relatório levou 56–115 s em testes (3.8 Flash, standard): 300 s cobre
+  // isso com retry. Com Flex, 1800 s (o máximo de um callable é 3600 s).
+  debateReport: {
+    concurrency: 20,
+    maxInstances: 5,
+    timeoutSeconds: REPORT_SERVICE_TIER === "flex" ? 1800 : 300,
+    memory: "512MiB",
+  },
+  onTurnCreated: { concurrency: 40, maxInstances: 10, timeoutSeconds: 120, memory: "512MiB" },
+} as const;
+
 // ── Cotas por usuário ────────────────────────────────────────────────────────
 export const QUOTA = {
   debatesPerDay: 3,
@@ -18,12 +55,11 @@ export const QUOTA = {
   // O "dia" da cota vira à meia-noite deste fuso.
   timeZone: "America/Sao_Paulo",
   timeZoneLabel: "horário de Brasília",
-  // Trava de turno em andamento: se um turno ficar preso (crash da instância),
-  // a trava expira depois disso. Deve ser > FUNCTIONS.debateTurn.timeoutSeconds
-  // (e a de relatório > FUNCTIONS.debateReport.timeoutSeconds) para nunca haver
-  // duas execuções sobrepostas.
-  turnLockSeconds: 130,
-  reportLockSeconds: 960,
+  // Travas de turno/relatório em andamento: se uma execução ficar presa (crash
+  // da instância), a trava expira depois disso. São sempre MAIORES que o
+  // timeout da função, para nunca haver duas execuções sobrepostas.
+  turnLockSeconds: FUNCTIONS.debateTurn.timeoutSeconds + 10,
+  reportLockSeconds: FUNCTIONS.debateReport.timeoutSeconds + 60,
   // Mínimo de falas do aluno para gerar o relatório final (mesma regra do
   // avaliador original em api/evaluate.js).
   minUserTurnsForReport: 4,
@@ -45,23 +81,19 @@ export const CONTEXT = {
   summaryEveryTurns: 3,
   summaryTargetTokens: 300,
   // Alvo para o prefixo fixo (system prompt + dossiê) ativar o cache implícito
-  // do Gemini (mínimo documentado de 4.096 tokens nos modelos 3.x Flash).
+  // do Gemini (mínimo documentado de 4.096 tokens nos modelos 3.x Flash). O
+  // tamanho real é registrado no log "prefix_tokens", uma vez por instância.
   cachePrefixMinTokens: 4096,
 } as const;
 
-// ── Modelos por papel ────────────────────────────────────────────────────────
-// IDs confirmados com chamada real à Gemini API em 2026-10-17
-// (models.list + generateContent): gemini-3.1-flash-lite, gemini-3.5-flash-lite,
-// gemini-3.8-flash.
-//
-// ATENÇÃO: o preço do gemini-3.8-flash DOBRA em 01/01/2027 (input, output e
-// cache). Ver PRICES abaixo antes de trocar o oponente para ele.
-export const MODEL_IDS = {
-  flashLite31: "gemini-3.1-flash-lite",
-  flashLite35: "gemini-3.5-flash-lite",
-  flash38: "gemini-3.8-flash",
+// ── Análise por turno ────────────────────────────────────────────────────────
+export const ANALYSIS = {
+  // Analisa os turnos 1, 1+N, 1+2N… (N = 1 analisa todos). Os demais ficam com
+  // analysisStatus "skipped". Subir N reduz RPM/custo da análise na mesma proporção.
+  analyzeEveryTurns: 1,
 } as const;
 
+// ── Papéis ───────────────────────────────────────────────────────────────────
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high";
 export type Role = "opponent" | "turnAnalysis" | "summary" | "report";
 
@@ -72,32 +104,45 @@ export interface RoleConfig {
   // Tokens de raciocínio contam como saída — o teto cobre raciocínio + resposta.
   maxOutputTokens: number;
   temperature: number;
-  // Timeout por tentativa (ms).
+  // Timeout de UMA tentativa (ms).
   timeoutMs: number;
-  // "flex" = 50% mais barato, latência variável (minutos). Só para papéis em
-  // que a latência não importa.
+  // Orçamento TOTAL (ms) para todas as tentativas + esperas + reserva. Tem de
+  // caber no timeoutSeconds da função que chama o papel.
+  deadlineMs: number;
+  // Parte do deadlineMs que o modelo principal NÃO pode usar: fica para o
+  // modelo de reserva (senão um principal lento esgota tudo antes da reserva).
+  fallbackReserveMs: number;
   serviceTier: "standard" | "flex";
 }
 
 export const ROLES: Record<Role, RoleConfig> = {
   opponent: {
     // Para testar o 3.8 Flash no oponente, troque SÓ a linha abaixo para
-    // MODEL_IDS.flash38 (lembre: preço dobra em 01/01/2027; não aceita "minimal").
+    // MODEL_IDS.flash38 (lembre: preço dobra em 01/01/2027; não aceita "minimal";
+    // em testes levou 31–114 s por turno).
     model: MODEL_IDS.flashLite31,
     fallbackModel: MODEL_IDS.flashLite35,
     thinkingLevel: "low",
-    maxOutputTokens: 1024,
+    // Teto de raciocínio + resposta. Com 1024, um turno de teste gastou 949 em
+    // raciocínio e a réplica saiu cortada (MAX_TOKENS). Só se paga o que for gerado.
+    maxOutputTokens: 2048,
     temperature: 0.8,
     timeoutMs: 30_000,
+    deadlineMs: 100_000, // < debateTurn.timeoutSeconds (120 s)
+    fallbackReserveMs: 25_000,
     serviceTier: "standard",
   },
   turnAnalysis: {
-    model: MODEL_IDS.flashLite31,
-    fallbackModel: MODEL_IDS.flashLite35,
+    // Modelo SEPARADO do oponente para usar outro pool de limite (RPM/TPM são
+    // por modelo): o oponente não disputa cota com a análise.
+    model: MODEL_IDS.flashLite35,
+    fallbackModel: MODEL_IDS.flashLite31,
     thinkingLevel: "low",
     maxOutputTokens: 2048,
     temperature: 0.2,
     timeoutMs: 60_000,
+    deadlineMs: 100_000, // < onTurnCreated.timeoutSeconds (120 s)
+    fallbackReserveMs: 30_000,
     serviceTier: "standard",
   },
   summary: {
@@ -107,6 +152,8 @@ export const ROLES: Record<Role, RoleConfig> = {
     maxOutputTokens: 600,
     temperature: 0.2,
     timeoutMs: 30_000,
+    deadlineMs: 100_000, // < onTurnCreated.timeoutSeconds (120 s)
+    fallbackReserveMs: 25_000,
     serviceTier: "standard",
   },
   report: {
@@ -115,12 +162,13 @@ export const ROLES: Record<Role, RoleConfig> = {
     thinkingLevel: "low",
     maxOutputTokens: 8192,
     temperature: 0.3,
-    // Em testes o 3.8 Flash levou ~60–115 s no tier standard.
-    timeoutMs: 240_000,
-    // Troque para "flex" quando a latência do relatório não importar (ex.:
-    // relatório entregue depois, por e-mail/tela de histórico). Flex usa
-    // capacidade ociosa e pode levar minutos; ver FUNCTIONS.debateReport.
-    serviceTier: "standard",
+    // Standard: 1 tentativa demorada (~115 s) + 1 retry cabem nos 270 − 60 s do
+    // principal; os 60 s finais ficam para a reserva (3.5 Flash-Lite gerou o
+    // relatório em ~4 s no teste em que o 3.8 Flash devolveu 503 repetidos).
+    timeoutMs: 150_000,
+    deadlineMs: REPORT_SERVICE_TIER === "flex" ? 1_700_000 : 270_000, // < debateReport.timeoutSeconds
+    fallbackReserveMs: 60_000,
+    serviceTier: REPORT_SERVICE_TIER,
   },
 };
 
@@ -130,7 +178,10 @@ export const FLEX_TIMEOUT_MS = 600_000;
 // ── Retry / fallback ─────────────────────────────────────────────────────────
 // Backoff exponencial com jitter: 1 s, 2 s, 4 s (8 s seria a próxima) entre as
 // tentativas no modelo principal; esgotou → modelo de reserva; esgotou → erro
-// amigável. Só re-tenta erros transitórios (429, 503 e falha de rede).
+// amigável. Só re-tenta erros transitórios (429, 503, 504, rede, timeout). Tudo
+// dentro do deadlineMs do papel: não começa tentativa sem tempo para terminá-la.
+// Obs.: o timeout por tentativa (httpOptions.timeout) também é enviado ao
+// servidor como deadline — estourou, a API responde 504 DEADLINE_EXCEEDED.
 export const RETRY = {
   maxAttempts: 4,
   baseDelayMs: 1000,
@@ -138,6 +189,9 @@ export const RETRY = {
   // Jitter multiplicativo: espera = base·2^n · (1 ± jitterRatio).
   jitterRatio: 0.3,
   fallbackMaxAttempts: 2,
+  // Tempo mínimo restante para iniciar uma tentativa — e timeout mínimo de uma
+  // tentativa: a Gemini API recusa (400) deadlines abaixo de 10 s.
+  minAttemptMs: 10_000,
   retryableStatus: [429, 503] as readonly number[],
 } as const;
 
@@ -145,15 +199,6 @@ export const RETRY = {
 export const LLM_MAX_CONCURRENT_PER_INSTANCE = 24;
 // Quanto tempo uma requisição espera por uma vaga no semáforo antes de desistir.
 export const LLM_QUEUE_TIMEOUT_MS = 15_000;
-
-// ── Cloud Functions: escala ──────────────────────────────────────────────────
-// 200 usuários × 1 turno/20 s ≈ 10 turnos/s no pico; cada turno leva ~2–4 s →
-// ~30–40 chamadas simultâneas. 10 instâncias × 40 dão folga de sobra.
-export const FUNCTIONS = {
-  debateTurn: { concurrency: 40, maxInstances: 10, timeoutSeconds: 120, memory: "512MiB" },
-  debateReport: { concurrency: 20, maxInstances: 5, timeoutSeconds: 900, memory: "512MiB" },
-  onTurnCreated: { concurrency: 40, maxInstances: 10, timeoutSeconds: 120, memory: "512MiB" },
-} as const;
 
 // ── Safety settings ──────────────────────────────────────────────────────────
 // O oponente defende posições históricas/políticas controversas dentro de uma

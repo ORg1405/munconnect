@@ -8,7 +8,8 @@
 // Saída: { debateId, turnIndex, text, model, usedFallback, usage{turn, session}, quota }
 
 import { HttpsError, type CallableRequest, type CallableResponse } from "firebase-functions/v2/https";
-import { CONTEXT } from "../config.js";
+import { CONTEXT, ROLES } from "../config.js";
+import { logPrefixTokensOnce } from "../prefixStats.js";
 import { buildOpponentPrompt, loadDossier, selectWindow } from "../context.js";
 import { toHttpsError } from "../errors.js";
 import { getProvider } from "../llm/index.js";
@@ -25,6 +26,7 @@ export interface DebateTurnOutput {
   text: string;
   model: string;
   usedFallback: boolean;
+  truncated: boolean; // réplica cortada pelo teto de tokens (raro; ver log llm_truncated)
   usage: {
     turn: LLMUsage & { costUsd: number; latencyMs: number };
     session: { costUsd: number; inputTokens: number; outputTokens: number; cachedTokens: number };
@@ -63,6 +65,14 @@ export async function handleDebateTurn(
       locale: input.locale,
     });
 
+    // Diagnóstico de cache: 1x por instância/comitê, em paralelo com a chamada.
+    void logPrefixTokensOnce(getProvider(), {
+      role: "opponent",
+      committeeId: debate.committeeId,
+      model: ROLES.opponent.model,
+      systemInstruction: prompt.systemInstruction,
+    });
+
     const streaming = Boolean(request.acceptsStreaming && response);
     const result = await callModel(getProvider(), {
       role: "opponent",
@@ -80,6 +90,7 @@ export async function handleDebateTurn(
       opponentText: text,
       model: result.model,
       usedFallback: result.usedFallback,
+      truncated: result.truncated,
       usage: result.usage,
       costUsd: result.costUsd,
       latencyMs: result.latencyMs,
@@ -92,6 +103,7 @@ export async function handleDebateTurn(
       text,
       model: result.model,
       usedFallback: result.usedFallback,
+      truncated: result.truncated,
       usage: {
         turn: { ...result.usage, costUsd: result.costUsd, latencyMs: result.latencyMs },
         session: {

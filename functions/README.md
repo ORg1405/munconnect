@@ -74,9 +74,122 @@ npm run compare -- --file meus-args.json --models gemini-3.1-flash-lite,gemini-3
 
 Faz chamadas reais e cobradas. O script também mostra o tamanho do prefixo fixo e avisa se ele estiver abaixo de 4.096 tokens (nesse caso o cache implícito não ativa).
 
+## Capacidade (RPM/TPM) — pico de 200 alunos
+
+**Variáveis** (padrões em `src/config.ts`):
+
+| | | |
+|---|---|---|
+| `U` | alunos debatendo ao mesmo tempo | 200 |
+| `T` | segundos entre dois turnos do mesmo aluno | ≥ 20 (`QUOTA.minSecondsBetweenTurns`, contado do início do turno anterior) |
+| `N` | analisar a cada N turnos | 1 (`ANALYSIS.analyzeEveryTurns`) |
+| `S` | resumo a cada S turnos | 3 (`CONTEXT.summaryEveryTurns`) |
+| `L` | latência do oponente | ~3 s (medido: 2–3 s; picos de 10–18 s com retry de rede) |
+
+**Fórmulas:**
+
+```
+turnos/min        = U × 60 / T
+RPM oponente      = turnos/min                      → pool gemini-3.1-flash-lite
+RPM resumo        = turnos/min / S                  → pool gemini-3.1-flash-lite
+RPM análise       = turnos/min / N                  → pool gemini-3.5-flash-lite (modelo separado)
+chamadas em voo   = RPM oponente × L / 60           (concorrência das instâncias)
+TPM entrada       = Σ RPM × tokens de entrada por chamada
+```
+
+**Tokens por chamada.** O cenário "com dossiê real" é o que vale para novembro.
+
+| Chamada | Medido hoje (dossiê placeholder, prefixo ~216 tokens) | Com dossiê real (prefixo P ≈ 4.500) |
+|---|---|---|
+| Oponente, entrada | 371 (turno 1) → 1.489 (turno 4); regime ≈ P + 2.000 | ≈ 6.500 |
+| Oponente, saída | ~235 visível + ~120 raciocínio (pico raro: 949) | igual |
+| Análise, entrada | 544–785 (P_juiz ≈ 180) | ≈ 5.100 |
+| Resumo, entrada | ≈ 1.300 (estimado: 3 turnos + resumo anterior) | igual (sem dossiê) |
+
+### (a) Pior caso: todos no intervalo mínimo (T = 20 s)
+
+```
+turnos/min   = 200 × 60 / 20 = 600
+3.1 Flash-Lite: oponente 600 + resumo 600/3 = 200   → 800 RPM
+3.5 Flash-Lite: análise 600/1                        → 600 RPM
+em voo:        600 × 3 / 60                          → ~30 chamadas simultâneas ao oponente
+TPM (dossiê real):
+  3.1: 600 × 6.500 + 200 × 1.300 = 3,90M + 0,26M     → ~4,2M TPM
+  3.5: 600 × 5.100                                   → ~3,1M TPM
+```
+
+Esse pico dura no máximo ~4 min por debate (12 turnos × 20 s, limite `QUOTA.turnsPerDebate`).
+
+### (b) Realista: fala por voz, um turno a cada 60–120 s
+
+```
+                     T = 60 s                  T = 120 s
+turnos/min           200 × 60/60 = 200         200 × 60/120 = 100
+3.1 (oponente+res.)  200 + 67   = 267 RPM      100 + 33   = 133 RPM
+3.5 (análise)        200 RPM                    100 RPM
+TPM 3.1 (dossiê)     200×6.500 + 67×1.300 ≈ 1,39M     ≈ 0,69M
+TPM 3.5 (dossiê)     200×5.100 ≈ 1,02M                ≈ 0,51M
+em voo (oponente)    ~10                        ~5
+```
+
+**Teto diário.** No máximo, cada aluno faz 3 debates × 12 turnos = 36 turnos por dia. Com 200 alunos, isso dá 7.200 turnos por dia:
+
+| Pool | Requisições por dia |
+|---|---|
+| 3.1 Flash-Lite | 7.200 + 2.400 (resumo) = 9.600 |
+| 3.5 Flash-Lite | 7.200 |
+| 3.8 Flash (relatórios) | 600 |
+
+**Margem.** Cada retry por 429/503 é mais uma requisição. Deixe 20–30% de folga sobre esses números ao conferir os limites do tier no AI Studio. Considere também que tokens cacheados contam no TPM.
+
+**Botões para aliviar:**
+- `ANALYSIS.analyzeEveryTurns = 2` corta a RPM da análise pela metade.
+- Subir `minSecondsBetweenTurns` reduz o pior caso de forma proporcional.
+- Trocar o modelo de um papel move a carga para outro pool (os limites são por modelo).
+
+## Relatório final: timeouts e estado para a UI
+
+| Camada | Valor | Onde |
+|---|---|---|
+| Função `debateReport` | 300 s (1800 s com Flex) | `FUNCTIONS.debateReport.timeoutSeconds` |
+| Orçamento de retry | 270 s, dos quais os últimos 60 s ficam para o modelo de reserva | `ROLES.report.deadlineMs` / `fallbackReserveMs` |
+| Uma tentativa | 150 s (600 s com Flex), nunca < 10 s | `ROLES.report.timeoutMs` |
+| Cliente (`httpsCallable`) | 310 s | `src/services/debateAI.js` → `REPORT_TIMEOUT_MS` |
+
+O relatório leva ~75 s no 3.8 Flash. Para a UI, o estado vive em `debates/{id}`:
+
+```
+reportStatus: null → "generating" (reportStartedAt) → "done" (report)
+                                                     ↘ "error" (reportError.reason)
+```
+
+`useDebateReport(debateId)` (em `src/hooks/useDebateReport.js`) junta a chamada com um `onSnapshot` desse doc:
+- Se o cliente estourar o timeout ou fechar a página, a função **continua** e grava o resultado. Isso foi testado no emulador: o cliente abortou aos 5 s e o relatório ficou `done` em 80 s.
+- Um `generating` com mais de 360 s vira `error` com `reason: "stale"`. Nesse caso a UI pode oferecer "tentar de novo".
+
+## Diagnóstico do cache (prefixo fixo)
+
+Uma vez por instância, para cada papel + comitê + modelo, o log registra `prefix_tokens`, que é o tamanho do system prompt + dossiê:
+- Abaixo de 4.096 tokens, o registro sai como **warning**, com `cacheEligible: false`.
+- Hoje, com o dossiê placeholder, o valor é **216** (oponente) e **180** (juiz).
+
+```
+jsonPayload.message="prefix_tokens"
+```
+
 ## Logs
 
-Cada chamada gera um `llm_call` (modelo, tokens de entrada/saída/raciocínio/cache, latência, custo estimado, debateId), sem o texto do aluno. Falhas transitórias geram `llm_attempt_failed`, e bloqueios de segurança geram `llm_blocked` (motivo e categorias). No Cloud Logging:
+Nenhum desses logs inclui o texto do aluno:
+
+| Log | Quando aparece | O que registra |
+|---|---|---|
+| `llm_call` | cada chamada | modelo, tokens de entrada/saída/raciocínio/cache, latência, custo estimado, debateId |
+| `llm_attempt_failed` | cada falha transitória | tipo e status da falha |
+| `llm_call_failed` | quando a chamada falha de vez, depois do retry e do modelo de reserva | — |
+| `llm_blocked` | bloqueio de segurança | motivo e categorias |
+| `llm_truncated` | `finishReason = MAX_TOKENS` | o turno fica com `truncated: true` |
+
+No Cloud Logging:
 
 ```
 jsonPayload.message="llm_call"

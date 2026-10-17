@@ -5,6 +5,8 @@
 
 import { logger } from "firebase-functions";
 import { FieldValue, type DocumentReference } from "firebase-admin/firestore";
+import { ROLES } from "../config.js";
+import { logPrefixTokensOnce } from "../prefixStats.js";
 import { buildJudgePrompt, buildSummaryPrompt, loadDossier, shouldUpdateSummary, type TurnRecord } from "../context.js";
 import { getProvider } from "../llm/index.js";
 import { LLMError } from "../llm/provider.js";
@@ -33,6 +35,12 @@ async function analyzeTurn(debateId: string, debate: DebateDoc, turn: TurnRecord
       summary: debate.summary,
       turn,
       locale: debate.locale,
+    });
+    void logPrefixTokensOnce(getProvider(), {
+      role: "turnAnalysis",
+      committeeId: debate.committeeId,
+      model: ROLES.turnAnalysis.model,
+      systemInstruction: prompt.systemInstruction,
     });
     const result = await callModel(getProvider(), {
       role: "turnAnalysis",

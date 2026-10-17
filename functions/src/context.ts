@@ -6,7 +6,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { CONTEXT } from "./config.js";
+import { ANALYSIS, CONTEXT } from "./config.js";
 import { JUDGE_SYSTEM, JUDGE_TURN } from "./prompts/judge.js";
 import { OPPONENT_SYSTEM, OPPONENT_TURN } from "./prompts/opponent.js";
 import { REPORT_DOSSIER_BLOCK, REPORT_SYSTEM, REPORT_TURN } from "./prompts/report.js";
@@ -84,6 +84,11 @@ export function selectWindow(
 
 export function shouldUpdateSummary(turnIndex: number, every: number = CONTEXT.summaryEveryTurns): boolean {
   return turnIndex > 0 && turnIndex % every === 0;
+}
+
+// Turnos 1, 1+N, 1+2N… — o primeiro turno sempre recebe feedback.
+export function shouldAnalyzeTurn(turnIndex: number, every: number = ANALYSIS.analyzeEveryTurns): boolean {
+  return turnIndex > 0 && (turnIndex - 1) % Math.max(1, every) === 0;
 }
 
 const LANGUAGE: Record<string, string> = {

@@ -9,6 +9,7 @@ import {
   buildSummaryPrompt,
   loadDossier,
   selectWindow,
+  shouldAnalyzeTurn,
   shouldUpdateSummary,
   type DebateSetup,
   type TurnRecord,
@@ -64,6 +65,16 @@ describe("selectWindow (janela + resumo)", () => {
 
   it("aceita entrada fora de ordem", () => {
     expect(selectWindow(turns(1, 5).reverse(), 0, WINDOW).map((t) => t.index)).toEqual([1, 2, 3, 4, 5]);
+  });
+});
+
+describe("shouldAnalyzeTurn", () => {
+  it("N = 1 analisa todos; N = 3 analisa 1, 4, 7, 10", () => {
+    const idx = Array.from({ length: 12 }, (_, i) => i + 1);
+    expect(idx.filter((i) => shouldAnalyzeTurn(i, 1))).toEqual(idx);
+    expect(idx.filter((i) => shouldAnalyzeTurn(i, 3))).toEqual([1, 4, 7, 10]);
+    expect(shouldAnalyzeTurn(0, 1)).toBe(false);
+    expect(shouldAnalyzeTurn(5, 0)).toBe(true); // N inválido vira 1
   });
 });
 

@@ -10,7 +10,7 @@ import {
   SAFETY_SETTINGS,
   type Role,
 } from "../config.js";
-import { estimateCostUsd, logBlocked, logCall, logFailedAttempt } from "../telemetry.js";
+import { estimateCostUsd, logBlocked, logCall, logCallFailed, logFailedAttempt, logTruncated } from "../telemetry.js";
 import { LLMError, type LLMProvider, type LLMRequest, type LLMResult } from "./provider.js";
 import { withRetryAndFallback, type RetryDeps } from "./retry.js";
 import { Semaphore } from "./semaphore.js";
@@ -21,6 +21,8 @@ export interface ModelCallResult extends LLMResult {
   costUsd: number;
   latencyMs: number;
   usedFallback: boolean;
+  // Resposta cortada pelo teto de maxOutputTokens (raciocínio conta no teto).
+  truncated: boolean;
 }
 
 export interface CallModelOptions {
@@ -31,7 +33,7 @@ export interface CallModelOptions {
   // Quando presente, usa streaming e repassa cada pedaço de texto.
   onChunk?: (text: string) => void | Promise<void>;
   debateId?: string;
-  retryDeps?: RetryDeps;
+  retryDeps?: Partial<RetryDeps>;
 }
 
 export async function callModel(provider: LLMProvider, opts: CallModelOptions): Promise<ModelCallResult> {
@@ -39,9 +41,10 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
   const release = await llmSemaphore.acquire(LLM_QUEUE_TIMEOUT_MS);
   try {
     const { value, info } = await withRetryAndFallback(
-      async ({ model, isFallback }) => {
+      async ({ model, isFallback, remainingMs }) => {
         // O modelo de reserva roda sempre no tier standard (Flex não tem garantia).
         const tier = isFallback ? "standard" : role.serviceTier;
+        const attemptTimeout = tier === "flex" ? FLEX_TIMEOUT_MS : role.timeoutMs;
         const req: LLMRequest = {
           model,
           systemInstruction: opts.systemInstruction,
@@ -53,7 +56,8 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
           responseJsonSchema: opts.responseJsonSchema,
           safetySettings: SAFETY_SETTINGS,
           serviceTier: tier,
-          timeoutMs: tier === "flex" ? FLEX_TIMEOUT_MS : role.timeoutMs,
+          // Nunca passa do orçamento restante do papel (deadlineMs).
+          timeoutMs: Math.min(attemptTimeout, remainingMs),
         };
         const t0 = Date.now();
         const result = opts.onChunk ? await provider.stream(req, opts.onChunk) : await provider.generate(req);
@@ -64,6 +68,8 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
         fallbackModel: role.fallbackModel,
         policy: RETRY,
         fallbackAttempts: RETRY.fallbackMaxAttempts,
+        deadlineMs: role.deadlineMs,
+        fallbackReserveMs: role.fallbackReserveMs,
         deps: opts.retryDeps,
         onFailedAttempt: (f) =>
           logFailedAttempt({
@@ -91,10 +97,29 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
       finishReason: result.finishReason,
       debateId: opts.debateId,
     });
-    return { ...result, costUsd, latencyMs, usedFallback: info.isFallback };
+    const truncated = result.finishReason === "MAX_TOKENS";
+    if (truncated) {
+      logTruncated({
+        role: opts.role,
+        model: result.model,
+        outputTokens: result.usage.outputTokens,
+        thoughtsTokens: result.usage.thoughtsTokens,
+        maxOutputTokens: role.maxOutputTokens,
+        debateId: opts.debateId,
+      });
+    }
+    return { ...result, costUsd, latencyMs, usedFallback: info.isFallback, truncated };
   } catch (err) {
     if (err instanceof LLMError && err.kind === "blocked" && err.blockInfo) {
       logBlocked({ role: opts.role, model: role.model, ...err.blockInfo, debateId: opts.debateId });
+    } else {
+      // Falha final do papel (depois de retry/reserva) — sem conteúdo.
+      logCallFailed({
+        role: opts.role,
+        kind: err instanceof LLMError ? err.kind : err instanceof Error ? err.name : "other",
+        status: err instanceof LLMError ? err.status : null,
+        debateId: opts.debateId,
+      });
     }
     throw err;
   } finally {
