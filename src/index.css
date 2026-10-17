@@ -162,6 +162,10 @@
   background: var(--bg-elevated) !important;
 }
 
+/* Botão gold outline (secundário) — hover sutil */
+.btn-gold-outline { transition: background 0.18s ease, color 0.18s ease, border-color 0.18s ease; }
+.btn-gold-outline:hover { background: color-mix(in hsl, var(--accent-400) 12%, transparent); }
+
 /* Region filter chip hover: lift + no layout shift */
 .region-chip {
   transition: transform 0.15s ease, background 0.15s ease,

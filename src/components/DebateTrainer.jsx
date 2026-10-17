@@ -59,12 +59,38 @@ const GHOST_BTN = {
   transition: "color 180ms, border-color 180ms",
 };
 
+// Gold primary (cápsula gold, texto navy) — modal de encerrar + botões do relatório.
+const GOLD_BTN = {
+  background: "var(--accent-500)",
+  color: "hsl(210 42% 8%)",
+  border: "none",
+  borderRadius: "var(--radius-btn)",
+  padding: "11px 22px",
+  fontSize: "var(--fs-body)",
+  fontWeight: 600,
+  fontFamily: "var(--font-ui)",
+  cursor: "pointer",
+  transition: "opacity 180ms, transform 180ms var(--ease-out-expo)",
+};
+
+// Gold outline (secundário) — botão "Encerrar sessão" no header. Hover via .btn-gold-outline.
+const GOLD_OUTLINE_BTN = {
+  background: "transparent",
+  color: "var(--accent-400)",
+  border: "1px solid var(--accent-400)",
+  borderRadius: "var(--radius-btn)",
+  fontFamily: "var(--font-ui)",
+  cursor: "pointer",
+};
+
 // ─── Setup screen ──────────────────────────────────────────────────────────
 function SetupScreen({ onStart }) {
   const [countryCode, setCountryCode] = useState("BR");
   const [committeeId, setCommitteeId] = useState("UNSC");
   const [topic, setTopic] = useState(MUN_COMMITTEES[0].topics[0]);
   const [difficulty, setDifficulty] = useState("intermediate");
+  const [nivelDelegado, setNivelDelegado] = useState("Não informado");
+  const [simsAnteriores, setSimsAnteriores] = useState(""); // string no input; "" → null no start
   const [suggesting, setSuggesting] = useState(false);
   const [suggested, setSuggested] = useState(null); // [{code2, name, rationale}]
   const [selectedAi, setSelectedAi] = useState([]); // [code2]
@@ -124,6 +150,8 @@ function SetupScreen({ onStart }) {
       committee: { id: committee.id, name: committee.name, short: committee.short },
       topic,
       difficulty,
+      nivelDelegado,
+      simsAnteriores: simsAnteriores === "" ? null : Number(simsAnteriores),
       aiDelegations,
     });
   }
@@ -159,6 +187,47 @@ function SetupScreen({ onStart }) {
             </option>
           ))}
         </select>
+      </section>
+
+      {/* Perfil do delegado — nível + simulações anteriores */}
+      <section style={{ ...CARD, marginBottom: 16 }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
+          <div style={{ flex: "1 1 260px", minWidth: 0 }}>
+            <div style={SECTION_LABEL}>Nível do delegado</div>
+            <select
+              value={nivelDelegado}
+              onChange={(e) => setNivelDelegado(e.target.value)}
+              style={{ ...INPUT, appearance: "none", cursor: "pointer" }}
+            >
+              {[
+                "Não informado",
+                "Novato (0 simulações)",
+                "Iniciante (1 simulação)",
+                "Intermediário (2 simulações)",
+                "Avançado-júnior (3+ simulações)",
+              ].map((n) => (
+                <option key={n} value={n}>{n}</option>
+              ))}
+            </select>
+          </div>
+          <div style={{ flex: "1 1 160px", minWidth: 0 }}>
+            <div style={SECTION_LABEL}>Simulações anteriores</div>
+            <input
+              type="number"
+              min={0}
+              max={99}
+              value={simsAnteriores}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "") { setSimsAnteriores(""); return; }
+                const n = Math.max(0, Math.min(99, Math.floor(Number(v))));
+                setSimsAnteriores(Number.isNaN(n) ? "" : String(n));
+              }}
+              placeholder="Opcional"
+              style={INPUT}
+            />
+          </div>
+        </div>
       </section>
 
       {/* Committee + topic */}
@@ -465,7 +534,25 @@ function ChatScreen({ session, onExit }) {
   const [pending, setPending] = useState(false);
   const [nextAiIdx, setNextAiIdx] = useState(0); // round-robin
   const [error, setError] = useState("");
+  const [showEndModal, setShowEndModal] = useState(false);
+  const [ending, setEnding] = useState(false); // debounce do confirmar
   const scrollRef = useRef(null);
+
+  // Botão "Encerrar sessão" só aparece com 4+ turnos do usuário (mínimo estatístico).
+  const userTurns = history.filter((m) => m.role === "user").length;
+  const canEnd = userTurns >= 4;
+
+  function closeEndModal() {
+    setShowEndModal(false);
+    setEnding(false);
+  }
+
+  function confirmEnd() {
+    if (ending) return; // debounce: ignora cliques repetidos
+    setEnding(true);
+    // TEMP (passo 3): o passo 4 substitui isto pelo fetch /api/evaluate + troca de view.
+    console.log("[passo 3] 'Encerrar e avaliar' — turnos do usuário:", userTurns);
+  }
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -561,9 +648,20 @@ function ChatScreen({ session, onExit }) {
             <span><span style={{ color: "var(--brand-400)" }}>You:</span> {userCountry.code2}</span>
             <span><span style={{ color: "var(--brand-400)" }}>vs:</span> {aiDelegations.map((d) => d.code2).join(" · ")}</span>
           </div>
-          <button onClick={onExit} style={{ ...GHOST_BTN, padding: "5px 12px", fontSize: "var(--fs-tiny)" }}>
-            ↺ Nova sessão
-          </button>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            {canEnd && (
+              <button
+                className="btn-gold-outline"
+                onClick={() => setShowEndModal(true)}
+                style={{ ...GOLD_OUTLINE_BTN, padding: "5px 12px", fontSize: "var(--fs-tiny)" }}
+              >
+                Encerrar sessão
+              </button>
+            )}
+            <button onClick={onExit} style={{ ...GHOST_BTN, padding: "5px 12px", fontSize: "var(--fs-tiny)" }}>
+              ↺ Nova sessão
+            </button>
+          </div>
         </div>
       </div>
 
@@ -645,6 +743,49 @@ function ChatScreen({ session, onExit }) {
           {pending ? "…" : "Enviar"}
         </button>
       </div>
+
+      {/* Modal de confirmação de encerramento */}
+      {showEndModal && (
+        <div
+          className="modal-overlay"
+          onClick={closeEndModal}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "hsl(210 42% 3% / 0.72)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 20,
+            zIndex: 100,
+          }}
+        >
+          <div
+            className="modal-content"
+            onClick={(e) => e.stopPropagation()}
+            style={{ ...CARD, maxWidth: 440, width: "100%", padding: 28 }}
+          >
+            <h3 style={{ fontSize: "var(--fs-h3)", fontFamily: "var(--font-ui)", fontWeight: 700, color: "var(--text-primary)", margin: "0 0 12px" }}>
+              Encerrar sessão
+            </h3>
+            <p style={{ fontSize: "var(--fs-small)", color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 24px" }}>
+              A sessão será encerrada e uma avaliação estruturada da sua performance será gerada. Isso pode levar até 30 segundos.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={closeEndModal} style={{ ...GHOST_BTN, padding: "9px 18px" }}>
+                Cancelar
+              </button>
+              <button
+                onClick={confirmEnd}
+                disabled={ending}
+                style={{ ...GOLD_BTN, padding: "9px 18px", fontSize: "var(--fs-small)", opacity: ending ? 0.6 : 1, cursor: ending ? "wait" : "pointer" }}
+              >
+                {ending ? "Avaliando…" : "Encerrar e avaliar"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
