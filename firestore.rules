@@ -174,6 +174,24 @@ service cloud.firestore {
       }
     }
 
+    // ── Users (perfil criado no cadastro — AuthContext.signup) ───────────────
+    // O dono lê e CRIA só o próprio doc, com lista FECHADA de campos: nada de
+    // role/isAdmin/permissões (admin continua vindo só de admins/{email}).
+    // e-mail = o do token (o signup grava cred.user.email); createdAt = hora do
+    // servidor (serverTimestamp). Sem update/delete pelo cliente.
+    match /users/{uid} {
+      allow read: if isSignedIn() && request.auth.uid == uid;
+      allow create: if isSignedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['displayName', 'email', 'createdAt'])
+        && request.resource.data.keys().hasAll(['email', 'createdAt'])
+        && (!('displayName' in request.resource.data) ||
+            (request.resource.data.displayName is string &&
+             request.resource.data.displayName.size() <= 100))
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
     // ── Default deny ───────────────────────────────────────────────────────────
     // Qualquer caminho não coberto acima: sem leitura e sem escrita.
     match /{document=**} {

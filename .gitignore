@@ -15,3 +15,6 @@ lighthouse.json
 functions/lib
 functions/.secret.local
 .runtimeconfig.json
+
+# Cópia local das regras publicadas no Console (só para comparar; nunca commitar)
+firestore.rules.console
