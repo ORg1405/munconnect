@@ -7,7 +7,7 @@
 // cota restante). Erros viram DebateAIError com mensagem pronta para a UI.
 
 import { httpsCallable } from "firebase/functions";
-import { collection, doc, onSnapshot, orderBy, query } from "firebase/firestore";
+import { collection, doc, onSnapshot, orderBy, query, updateDoc } from "firebase/firestore";
 import { db, functions } from "../firebase";
 
 // Timeouts do CLIENTE — acompanham functions/src/config.ts (FUNCTIONS.*.timeoutSeconds).
@@ -169,4 +169,24 @@ export function subscribeTurns(debateId, cb, onError) {
       ),
     onError,
   );
+}
+
+// Limites de disputes (mesmos de firestore.rules → validDisputes).
+export const DISPUTE_MAX_CHARS = 500;
+export const DISPUTE_MAX_FALLACIES = 10;
+
+/**
+ * Registra a contestação de uma falácia apontada pelo juiz (só para calibração:
+ * não muda nota nem análise). As rules deixam o dono gravar SÓ `disputes`.
+ */
+export async function contestFallacy(debateId, turnId, fallacyIndex, text) {
+  const value = text.trim();
+  if (!value || value.length > DISPUTE_MAX_CHARS || fallacyIndex < 0 || fallacyIndex >= DISPUTE_MAX_FALLACIES) {
+    throw new DebateAIError({ code: "invalid-argument", message: `Escreva a contestação em até ${DISPUTE_MAX_CHARS} caracteres.` });
+  }
+  try {
+    await updateDoc(doc(db, "debates", debateId, "turns", turnId), { [`disputes.${fallacyIndex}`]: value });
+  } catch {
+    throw new DebateAIError({ code: "unavailable", message: "Não foi possível registrar a contestação agora. Seu texto continua aqui; tente de novo." });
+  }
 }

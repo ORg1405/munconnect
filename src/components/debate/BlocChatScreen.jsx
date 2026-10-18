@@ -9,6 +9,7 @@ import { useDebateTurn } from "../../hooks/useDebateTurn";
 import { useSpeechInput } from "../../hooks/useSpeechInput";
 import { useTurnAnalyses } from "../../hooks/useTurnAnalyses";
 import { MessageBubble, TypingIndicator } from "./Bubbles";
+import DisputeControl from "./DisputeControl";
 import JudgePanel from "./JudgePanel";
 import { GHOST_BTN, INPUT, PRIMARY_BTN } from "./styles";
 
@@ -113,7 +114,13 @@ export default function BlocChatScreen({ session, onExit }) {
             <MessageBubble entry={userEntry(t.userText)} isUser />
             <MessageBubble entry={aiEntry(t.opponentText)} isUser={false} />
             {/* Depois da réplica: a análise chega depois e não empurra a resposta. */}
-            <JudgePanel turn={analyses[t.index] ?? { analysisStatus: "pending" }} defaultOpen={t.index === turns.at(-1).index} />
+            <JudgePanel
+              turn={analyses[t.index] ?? { analysisStatus: "pending" }}
+              defaultOpen={t.index === turns.at(-1).index}
+              renderFallacyActions={(_, i) => (
+                <DisputeControl debateId={debateId} turnId={analyses[t.index].id} index={i} existing={analyses[t.index].disputes?.[i]} />
+              )}
+            />
           </div>
         ))}
 
