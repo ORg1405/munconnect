@@ -17,6 +17,8 @@ import {
 import { JUDGE_SYSTEM } from "../src/prompts/judge.js";
 import { OPPONENT_SYSTEM } from "../src/prompts/opponent.js";
 import { placeholdersOf, render } from "../src/prompts/template.js";
+import { TPI_JUDGE_SYSTEM, TPI_OPPONENT_SYSTEM, TPI_OPPONENT_TURN } from "../src/prompts/tpi.js";
+import { parseSetup } from "../src/validation.js";
 
 const setup: DebateSetup = {
   committeeName: "Comitê Teste",
@@ -157,5 +159,60 @@ describe("loadDossier", () => {
     expect(loadDossier("X", dir)).toBe("DOSSIE X");
     expect(loadDossier("NAO_EXISTE", dir)).toBe("PADRAO");
     expect(loadDossier("../../etc/passwd", dir)).toBe("PADRAO");
+  });
+});
+
+describe("prompts do TPI", () => {
+  const tpi: DebateSetup = {
+    ...setup,
+    topic: "Fome como método de guerra",
+    userCountry: { code2: "ACUS", name: "Bloco da Acusação" },
+    aiDelegation: { code2: "DEF", name: "Bloco da Defesa" },
+  };
+
+  it("oponente: regras + dossiê fixos; só o bloco CONFIGURAÇÃO e o resumo variam", () => {
+    expect(placeholdersOf(TPI_OPPONENT_SYSTEM)).toEqual(["dossie"]);
+    expect(placeholdersOf(TPI_OPPONENT_TURN)).toEqual(["papel_oponente", "papel_aluno", "nivel", "tema_do_ciclo", "resumo", "janela", "fala"]);
+    const a = buildOpponentPrompt({ committeeId: "TPI", dossier: "D", setup: tpi, summary: "", window: [], userText: "x", locale: "pt-BR" });
+    const b = buildOpponentPrompt({
+      committeeId: "TPI",
+      dossier: "D",
+      setup: { ...tpi, userCountry: tpi.aiDelegation, aiDelegation: tpi.userCountry, difficulty: "advanced" },
+      summary: "s",
+      window: turns(1, 2),
+      userText: "y",
+      locale: "pt-BR",
+    });
+    expect(a.systemInstruction).toBe(b.systemInstruction);
+    expect(a.systemInstruction.trimEnd().endsWith("DOSSIÊ\nD")).toBe(true);
+    expect(a.userContent.startsWith("CONFIGURAÇÃO DESTE DEBATE")).toBe(true);
+    expect(a.userContent).toContain("- Você é o: Bloco da Defesa");
+    expect(a.userContent).toContain("- O estudante é o: Bloco da Acusação");
+    expect(a.userContent).toContain("- Nível de dificuldade: intermediário");
+    expect(a.userContent).toContain("- Tema do ciclo atual: Fome como método de guerra");
+    expect(b.userContent).toContain("- Nível de dificuldade: avançado");
+  });
+
+  it("juiz: papéis na abertura, dossiê no fim do system, tema e turno na parte variável", () => {
+    expect(placeholdersOf(TPI_JUDGE_SYSTEM)).toEqual(["papel_aluno", "papel_oponente", "dossie"]);
+    const j = buildJudgePrompt({ committeeId: "TPI", dossier: "D", setup: tpi, summary: "", turn: turns(3, 3)[0], locale: "pt-BR" });
+    expect(j.systemInstruction).toContain("ESTUDANTE (Bloco da Acusação)");
+    expect(j.systemInstruction).toContain("OPONENTE (Bloco da Defesa)");
+    expect(j.userContent).toContain("TEMA DO CICLO: Fome como método de guerra");
+    expect(j.userContent).toContain("TURNO: 3");
+    for (const p of [j.systemInstruction, j.userContent]) expect(p).not.toMatch(/\{\{\w+\}\}/);
+  });
+
+  it("outros comitês seguem com os prompts genéricos", () => {
+    const p = buildOpponentPrompt({ committeeId: "SOLIDARNOSC", dossier: "D", setup, summary: "", window: [], userText: "x", locale: "pt-BR" });
+    expect(p.systemInstruction).toBe(render(OPPONENT_SYSTEM, { dossie: "D" }));
+  });
+
+  it("setup do TPI exige os dois blocos, opostos", () => {
+    const base = { topic: "t", userCountry: tpi.userCountry, aiDelegation: tpi.aiDelegation };
+    expect(parseSetup(base, "TPI").aiDelegation.name).toBe("Bloco da Defesa");
+    expect(() => parseSetup({ ...base, aiDelegation: tpi.userCountry }, "TPI")).toThrow(/blocos opostos/);
+    expect(() => parseSetup({ ...base, aiDelegation: { code2: "IL", name: "Israel" } }, "TPI")).toThrow(/blocos opostos/);
+    expect(parseSetup({ ...base, aiDelegation: { code2: "IL", name: "Israel" } }, "UNSC").aiDelegation.name).toBe("Israel");
   });
 });

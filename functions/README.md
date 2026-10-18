@@ -26,7 +26,7 @@ src/
   prompts/               ← opponent.ts, judge.ts, summary.ts, report.ts (provisórios, exceto report)
   schemas/               ← turnAnalysis.ts, report.ts (responseJsonSchema)
   dossiers/<id>.md       ← dossiê do comitê, carregado inteiro no prefixo (_default.md se faltar)
-scripts/compare-opponent.ts ← compara dois modelos no prompt do oponente
+scripts/compare-opponent.ts ← compara cenários (modelo + raciocínio) no oponente e no juiz
 test/                    ← vitest (Gemini mockado)
 ```
 
@@ -69,10 +69,12 @@ Com `-H "Accept: text/event-stream"` a resposta vem em streaming (SSE).
 ```bash
 cd functions
 npm run compare -- --file scripts/compare-args.example.json
-npm run compare -- --file meus-args.json --models gemini-3.1-flash-lite,gemini-3.8-flash
+npm run compare -- --file scripts/compare-args.tpi.json --judge   --scenarios gemini-3.1-flash-lite:low,gemini-3.1-flash-lite:minimal,gemini-3.5-flash-lite:low
 ```
 
-Faz chamadas reais e cobradas. O script também mostra o tamanho do prefixo fixo e avisa se ele estiver abaixo de 4.096 tokens (nesse caso o cache implícito não ativa).
+Cada cenário é `modelo:thinkingLevel`. `--judge` roda também o juiz (análise por turno, com o schema) sobre a réplica do mesmo cenário. `--args 1,3` roda só esses argumentos, `--judge-max-tokens N` troca o teto de saída do juiz e `--out arquivo.json` grava tudo em JSON. Em comitê de blocos (TPI), cada argumento diz o bloco do aluno (`"aluno"`), e o oponente fica com o bloco contrário.
+
+Faz chamadas reais e cobradas, sem retry. O script também imprime o log `prefix_tokens` (tamanho do prefixo fixo do oponente e do juiz) e avisa se ele estiver abaixo de 4.096 tokens (nesse caso o cache implícito não ativa).
 
 ## Capacidade (RPM/TPM) — pico de 200 alunos
 

@@ -3,7 +3,7 @@
 
 import { HttpsError, type CallableRequest } from "firebase-functions/v2/https";
 import { LIMITS } from "./config.js";
-import { COMMITTEE_ID_RE, type DebateSetup, type Delegation } from "./context.js";
+import { COMMITTEE_ID_RE, promptsFor, type DebateSetup, type Delegation } from "./context.js";
 
 export interface DebateTurnInput {
   debateId: string | null;
@@ -57,11 +57,18 @@ export function parseSetup(v: unknown, committeeId: string): DebateSetup {
     }
     sims = o.simsAnteriores as number;
   }
+  const userCountry = delegation(o.userCountry, "setup.userCountry");
+  const aiDelegation = delegation(o.aiDelegation, "setup.aiDelegation");
+  // Comitê de blocos (ex.: TPI): aluno e oponente são os dois blocos, opostos.
+  const blocs = promptsFor(committeeId).blocs;
+  if (blocs && (!blocs.includes(userCountry.name) || !blocs.includes(aiDelegation.name) || userCountry.name === aiDelegation.name)) {
+    bad(`Neste comitê, aluno e oponente devem ser blocos opostos: ${blocs.join(" ou ")}.`);
+  }
   return {
     committeeName: typeof o.committeeName === "string" && o.committeeName.trim() ? str(o.committeeName, "committeeName") : committeeId,
     topic: str(o.topic, "setup.topic"),
-    userCountry: delegation(o.userCountry, "setup.userCountry"),
-    aiDelegation: delegation(o.aiDelegation, "setup.aiDelegation"),
+    userCountry,
+    aiDelegation,
     difficulty: difficulty as DebateSetup["difficulty"],
     nivelDelegado: typeof o.nivelDelegado === "string" && o.nivelDelegado.trim() ? str(o.nivelDelegado, "nivelDelegado") : "Não informado",
     simsAnteriores: sims,

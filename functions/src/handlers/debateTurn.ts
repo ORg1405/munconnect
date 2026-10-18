@@ -57,6 +57,7 @@ export async function handleDebateTurn(
     const { debate } = reservation;
     const recent = isNew ? [] : await loadRecentTurns(debateId, CONTEXT.maxWindowTurns);
     const prompt = buildOpponentPrompt({
+      committeeId: debate.committeeId,
       dossier: loadDossier(debate.committeeId),
       setup: debate.setup,
       summary: debate.summary,

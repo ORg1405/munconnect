@@ -69,6 +69,24 @@ export const MUN_COMMITTEES = [
     short: "SOLIDARNOSC",
     topics: ["PLACEHOLDER — tópico a definir"],
   },
+  {
+    // SISTA III. Comitê de julgamento: dois blocos opostos em vez de países.
+    // Os topics são os temas dos ciclos da Instrução. Dossiê e prompts do
+    // backend de IA: functions/src/dossiers/TPI.md e functions/src/prompts/tpi.ts.
+    id: "TPI",
+    name: "TPI: O Julgamento de Benjamin Netanyahu",
+    short: "TPI",
+    conference: "SISTA III",
+    topics: [
+      "Competência do TPI",
+      "Fome como método de guerra",
+      "Ataques a civis e condução das hostilidades",
+    ],
+    blocs: [
+      { code2: "ACUS", name: "Bloco da Acusação" },
+      { code2: "DEF", name: "Bloco da Defesa" },
+    ],
+  },
 ];
 
 export function findCommitteeById(id) {

@@ -12,6 +12,7 @@ import { OPPONENT_SYSTEM, OPPONENT_TURN } from "./prompts/opponent.js";
 import { REPORT_DOSSIER_BLOCK, REPORT_SYSTEM, REPORT_TURN } from "./prompts/report.js";
 import { SUMMARY_SYSTEM, SUMMARY_TURN } from "./prompts/summary.js";
 import { render } from "./prompts/template.js";
+import { TPI_BLOCS, TPI_JUDGE_SYSTEM, TPI_JUDGE_TURN, TPI_OPPONENT_SYSTEM, TPI_OPPONENT_TURN } from "./prompts/tpi.js";
 
 export interface Delegation {
   code2: string;
@@ -114,8 +115,67 @@ export function formatTurns(turns: TurnRecord[], setup: DebateSetup): string {
     .join("\n\n");
 }
 
+// ── Prompts por comitê ───────────────────────────────────────────────────────
+// Comitê com prompts próprios (ex.: TPI) usa o seu conjunto; os demais usam os
+// prompts genéricos de MUN. `blocs`, quando presente, são os únicos papéis
+// válidos para aluno e oponente (sempre opostos).
+export interface PromptSet {
+  opponentSystem: string;
+  opponentTurn: string;
+  judgeSystem: string;
+  judgeTurn: string;
+  blocs?: readonly [string, string];
+}
+
+const GENERIC_PROMPTS: PromptSet = {
+  opponentSystem: OPPONENT_SYSTEM,
+  opponentTurn: OPPONENT_TURN,
+  judgeSystem: JUDGE_SYSTEM,
+  judgeTurn: JUDGE_TURN,
+};
+
+const COMMITTEE_PROMPTS: Record<string, PromptSet> = {
+  TPI: {
+    opponentSystem: TPI_OPPONENT_SYSTEM,
+    opponentTurn: TPI_OPPONENT_TURN,
+    judgeSystem: TPI_JUDGE_SYSTEM,
+    judgeTurn: TPI_JUDGE_TURN,
+    blocs: TPI_BLOCS,
+  },
+};
+
+export function promptsFor(committeeId: string | undefined): PromptSet {
+  return (committeeId && COMMITTEE_PROMPTS[committeeId]) || GENERIC_PROMPTS;
+}
+
+const NIVEL: Record<DebateSetup["difficulty"], string> = {
+  beginner: "iniciante",
+  intermediate: "intermediário",
+  advanced: "avançado",
+};
+
+// Variáveis comuns a todos os templates de turno (render ignora as que o
+// template não usa). papel_* / nivel / tema_do_ciclo são os nomes dos prompts
+// por comitê; os demais, dos genéricos.
+function setupVars(setup: DebateSetup, locale: string, summary: string): Record<string, string> {
+  return {
+    comite: setup.committeeName,
+    topico: setup.topic,
+    tema_do_ciclo: setup.topic,
+    delegacaoOponente: setup.aiDelegation.name,
+    papel_oponente: setup.aiDelegation.name,
+    delegacaoAluno: setup.userCountry.name,
+    papel_aluno: setup.userCountry.name,
+    dificuldade: setup.difficulty,
+    nivel: NIVEL[setup.difficulty],
+    idioma: languageFor(locale),
+    resumo: summary || NO_SUMMARY,
+  };
+}
+
 // ── Prompts por papel ────────────────────────────────────────────────────────
 export function buildOpponentPrompt(args: {
+  committeeId?: string;
   dossier: string;
   setup: DebateSetup;
   summary: string;
@@ -123,38 +183,33 @@ export function buildOpponentPrompt(args: {
   userText: string;
   locale: string;
 }): PromptParts {
-  const { setup } = args;
+  const prompts = promptsFor(args.committeeId);
+  const vars = setupVars(args.setup, args.locale, args.summary);
   return {
-    systemInstruction: render(OPPONENT_SYSTEM, { dossie: args.dossier }),
-    userContent: render(OPPONENT_TURN, {
-      comite: setup.committeeName,
-      topico: setup.topic,
-      delegacaoOponente: setup.aiDelegation.name,
-      delegacaoAluno: setup.userCountry.name,
-      dificuldade: setup.difficulty,
-      idioma: languageFor(args.locale),
-      resumo: args.summary || NO_SUMMARY,
-      janela: formatTurns(args.window, setup),
+    systemInstruction: render(prompts.opponentSystem, { ...vars, dossie: args.dossier }),
+    userContent: render(prompts.opponentTurn, {
+      ...vars,
+      janela: formatTurns(args.window, args.setup),
       fala: args.userText,
     }),
   };
 }
 
 export function buildJudgePrompt(args: {
+  committeeId?: string;
   dossier: string;
   setup: DebateSetup;
   summary: string;
   turn: TurnRecord;
   locale: string;
 }): PromptParts {
+  const prompts = promptsFor(args.committeeId);
+  const vars = setupVars(args.setup, args.locale, args.summary);
   return {
-    systemInstruction: render(JUDGE_SYSTEM, { dossie: args.dossier }),
-    userContent: render(JUDGE_TURN, {
-      comite: args.setup.committeeName,
-      topico: args.setup.topic,
-      delegacaoAluno: args.setup.userCountry.name,
-      idioma: languageFor(args.locale),
-      resumo: args.summary || NO_SUMMARY,
+    systemInstruction: render(prompts.judgeSystem, { ...vars, dossie: args.dossier }),
+    userContent: render(prompts.judgeTurn, {
+      ...vars,
+      turno: String(args.turn.index),
       fala: args.turn.userText,
       replica: args.turn.opponentText,
     }),

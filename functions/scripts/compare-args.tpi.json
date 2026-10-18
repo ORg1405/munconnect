@@ -1,0 +1,38 @@
+{
+  "committeeId": "TPI",
+  "locale": "pt-BR",
+  "setup": {
+    "committeeName": "TPI: O Julgamento de Benjamin Netanyahu",
+    "topic": "Competência do TPI",
+    "userCountry": { "code2": "ACUS", "name": "Bloco da Acusação" },
+    "aiDelegation": { "code2": "DEF", "name": "Bloco da Defesa" },
+    "difficulty": "intermediate"
+  },
+  "arguments": [
+    {
+      "aluno": "Bloco da Acusação",
+      "tema": "Competência do TPI",
+      "text": "A Palestina aderiu ao Estatuto de Roma em 2015. Como o TPI exerce jurisdição pelo território onde o crime ocorreu, e não pela nacionalidade do acusado, a Corte é competente sobre Gaza, mesmo que Israel nunca tenha ratificado."
+    },
+    {
+      "aluno": "Bloco da Acusação",
+      "tema": "Fome como método de guerra",
+      "text": "O então ministro da Defesa anunciou publicamente o corte de água, comida, combustível e eletricidade. Isso prova que a fome foi usada de forma deliberada, e não como efeito colateral."
+    },
+    {
+      "aluno": "Bloco da Acusação",
+      "tema": "Fome como método de guerra",
+      "text": "Netanyahu responde por corrupção em Israel. Se ele é corrupto, não dá para confiar em nada do que seu governo diz sobre Gaza, então o mandado se justifica."
+    },
+    {
+      "aluno": "Bloco da Defesa",
+      "tema": "Competência do TPI",
+      "text": "Israel nunca ratificou o Estatuto de Roma. Portanto, o TPI não pode julgar nenhum israelense, e o mandado é nulo."
+    },
+    {
+      "aluno": "Bloco da Defesa",
+      "tema": "Ataques a civis e condução das hostilidades",
+      "text": "Israel emite alertas prévios de evacuação, e o Hamas se esconde entre civis. Logo, não existe ataque indiscriminado, e a responsabilidade pelas mortes é do Hamas."
+    }
+  ]
+}

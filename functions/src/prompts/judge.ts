@@ -17,6 +17,7 @@ Responda somente com o JSON do schema.
 export const JUDGE_TURN = `<sessao>
 Comitê: {{comite}}
 Tópico: {{topico}}
+Turno: {{turno}}
 Delegação do aluno: {{delegacaoAluno}}
 Idioma do feedback: {{idioma}}
 </sessao>

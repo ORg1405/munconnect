@@ -30,6 +30,7 @@ async function analyzeTurn(debateId: string, debate: DebateDoc, turn: TurnRecord
   if (!(await claimTurnAnalysis(turnRef))) return;
   try {
     const prompt = buildJudgePrompt({
+      committeeId: debate.committeeId,
       dossier: loadDossier(debate.committeeId),
       setup: debate.setup,
       summary: debate.summary,
