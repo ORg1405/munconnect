@@ -1,87 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { MUN_COUNTRIES, findCountryByCode } from "../data/munCountries";
 import { MUN_COMMITTEES, findCommitteeById } from "../data/munCommittees";
-
-// ─── shared atoms ──────────────────────────────────────────────────────────
-const SECTION_LABEL = {
-  fontSize: "var(--fs-tiny)",
-  fontWeight: 600,
-  color: "var(--brand-400)",
-  letterSpacing: "0.08em",
-  textTransform: "uppercase",
-  marginBottom: 10,
-  fontFamily: "var(--font-mono)",
-};
-
-const CARD = {
-  background: "var(--bg-elevated)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-card)",
-  padding: 24,
-};
-
-const INPUT = {
-  width: "100%",
-  background: "var(--bg-overlay)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-btn)",
-  padding: "10px 14px",
-  fontSize: "var(--fs-body)",
-  fontFamily: "var(--font-ui)",
-  color: "var(--text-primary)",
-  outline: "none",
-  transition: "border-color 200ms",
-};
-
-const PRIMARY_BTN = {
-  background: "var(--grad-brand)",
-  color: "white",
-  border: "none",
-  borderRadius: "var(--radius-btn)",
-  padding: "11px 22px",
-  fontSize: "var(--fs-body)",
-  fontWeight: 600,
-  fontFamily: "var(--font-ui)",
-  cursor: "pointer",
-  boxShadow: "var(--glow-brand)",
-  transition: "transform 180ms var(--ease-out-expo), opacity 180ms",
-};
-
-const GHOST_BTN = {
-  background: "transparent",
-  color: "var(--text-secondary)",
-  border: "1px solid var(--border)",
-  borderRadius: "var(--radius-btn)",
-  padding: "9px 16px",
-  fontSize: "var(--fs-small)",
-  fontFamily: "var(--font-ui)",
-  cursor: "pointer",
-  transition: "color 180ms, border-color 180ms",
-};
-
-// Gold primary (cápsula gold, texto navy) — modal de encerrar + botões do relatório.
-const GOLD_BTN = {
-  background: "var(--accent-500)",
-  color: "hsl(210 42% 8%)",
-  border: "none",
-  borderRadius: "var(--radius-btn)",
-  padding: "11px 22px",
-  fontSize: "var(--fs-body)",
-  fontWeight: 600,
-  fontFamily: "var(--font-ui)",
-  cursor: "pointer",
-  transition: "opacity 180ms, transform 180ms var(--ease-out-expo)",
-};
-
-// Gold outline (secundário) — botão "Encerrar sessão" no header. Hover via .btn-gold-outline.
-const GOLD_OUTLINE_BTN = {
-  background: "transparent",
-  color: "var(--accent-400)",
-  border: "1px solid var(--accent-400)",
-  borderRadius: "var(--radius-btn)",
-  fontFamily: "var(--font-ui)",
-  cursor: "pointer",
-};
+import { CARD, GHOST_BTN, GOLD_BTN, GOLD_OUTLINE_BTN, INPUT, PRIMARY_BTN, SECTION_LABEL } from "./debate/styles";
+import { blocDebateSetup, isBlocCommittee, opposingBloc } from "../lib/debateUi";
 
 // ─── Setup screen ──────────────────────────────────────────────────────────
 function SetupScreen({ onStart }) {
@@ -94,9 +15,14 @@ function SetupScreen({ onStart }) {
   const [suggesting, setSuggesting] = useState(false);
   const [suggested, setSuggested] = useState(null); // [{code2, name, rationale}]
   const [selectedAi, setSelectedAi] = useState([]); // [code2]
+  const [userBlocCode, setUserBlocCode] = useState(null); // comitê de blocos (ex.: TPI)
   const [error, setError] = useState("");
 
   const committee = findCommitteeById(committeeId);
+  // Comitê de blocos: o aluno escolhe um bloco e a IA fica com o oposto — sem
+  // país, sem sugestão de delegações; o debate roda pelo callable debateTurn.
+  const isBloc = isBlocCommittee(committee);
+  const userBloc = isBloc ? committee.blocs.find((b) => b.code2 === userBlocCode) ?? committee.blocs[0] : null;
 
   async function suggestDelegations() {
     setError("");
@@ -134,6 +60,19 @@ function SetupScreen({ onStart }) {
   }
 
   function start() {
+    if (isBloc) {
+      const sims = simsAnteriores === "" ? null : Number(simsAnteriores);
+      onStart({
+        kind: "blocs",
+        committee,
+        topic,
+        difficulty,
+        userBloc,
+        aiBloc: opposingBloc(committee, userBloc),
+        setup: blocDebateSetup({ committee, userBloc, topic, difficulty, nivelDelegado, simsAnteriores: sims }),
+      });
+      return;
+    }
     if (!selectedAi.length) {
       setError("Selecione pelo menos uma delegação para a IA interpretar.");
       return;
@@ -173,7 +112,8 @@ function SetupScreen({ onStart }) {
         </p>
       </header>
 
-      {/* Country */}
+      {/* Country (comitês de blocos escolhem o bloco mais abaixo) */}
+      {!isBloc && (
       <section style={{ ...CARD, marginBottom: 16 }}>
         <div style={SECTION_LABEL}>Sua delegação</div>
         <select
@@ -188,6 +128,7 @@ function SetupScreen({ onStart }) {
           ))}
         </select>
       </section>
+      )}
 
       {/* Perfil do delegado — nível + simulações anteriores */}
       <section style={{ ...CARD, marginBottom: 16 }}>
@@ -263,7 +204,7 @@ function SetupScreen({ onStart }) {
           })}
         </div>
 
-        <div style={SECTION_LABEL}>Tópico</div>
+        <div style={SECTION_LABEL}>{isBloc ? "Tema do ciclo" : "Tópico"}</div>
         <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 12 }}>
           {committee.topics.map((t) => {
             const selected = t === topic;
@@ -294,18 +235,56 @@ function SetupScreen({ onStart }) {
           })}
         </div>
 
-        <input
-          type="text"
-          value={topic}
-          onChange={(e) => {
-            setTopic(e.target.value);
-            setSuggested(null);
-            setSelectedAi([]);
-          }}
-          placeholder="Ou digite um tópico próprio…"
-          style={INPUT}
-        />
+        {/* Comitê de blocos: só os temas do dossiê (o oponente argumenta com base neles). */}
+        {!isBloc && (
+          <input
+            type="text"
+            value={topic}
+            onChange={(e) => {
+              setTopic(e.target.value);
+              setSuggested(null);
+              setSelectedAi([]);
+            }}
+            placeholder="Ou digite um tópico próprio…"
+            style={INPUT}
+          />
+        )}
       </section>
+
+      {/* Bloco do aluno — o oponente recebe o oposto */}
+      {isBloc && (
+        <section style={{ ...CARD, marginBottom: 16 }}>
+          <div style={SECTION_LABEL}>Seu bloco</div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {committee.blocs.map((b) => {
+              const selected = b.code2 === userBloc.code2;
+              return (
+                <button
+                  key={b.code2}
+                  onClick={() => setUserBlocCode(b.code2)}
+                  style={{
+                    flex: 1,
+                    background: selected ? "color-mix(in hsl, var(--brand-500) 15%, transparent)" : "var(--bg-overlay)",
+                    border: `1px solid ${selected ? "color-mix(in hsl, var(--brand-500) 40%, transparent)" : "var(--border)"}`,
+                    borderRadius: "var(--radius-btn)",
+                    padding: "10px 12px",
+                    cursor: "pointer",
+                    fontSize: "var(--fs-small)",
+                    fontWeight: 600,
+                    color: "var(--text-primary)",
+                    transition: "background 180ms, border-color 180ms",
+                  }}
+                >
+                  {b.name}
+                </button>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", margin: "10px 0 0" }}>
+            A IA representa o {opposingBloc(committee, userBloc).name}.
+          </p>
+        </section>
+      )}
 
       {/* Difficulty */}
       <section style={{ ...CARD, marginBottom: 16 }}>
@@ -341,6 +320,7 @@ function SetupScreen({ onStart }) {
       </section>
 
       {/* AI delegations */}
+      {!isBloc && (
       <section style={{ ...CARD, marginBottom: 20 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
           <div style={{ ...SECTION_LABEL, marginBottom: 0 }}>Delegações da IA</div>
@@ -428,6 +408,7 @@ function SetupScreen({ onStart }) {
           </div>
         </details>
       </section>
+      )}
 
       {error && (
         <p style={{ fontSize: "var(--fs-small)", color: "var(--danger)", marginBottom: 12, fontFamily: "var(--font-mono)" }}>
@@ -437,8 +418,13 @@ function SetupScreen({ onStart }) {
 
       <button
         onClick={start}
-        disabled={!selectedAi.length}
-        style={{ ...PRIMARY_BTN, opacity: selectedAi.length ? 1 : 0.5, cursor: selectedAi.length ? "pointer" : "not-allowed" }}
+        disabled={!isBloc && !selectedAi.length}
+        style={{
+          ...PRIMARY_BTN,
+          marginTop: isBloc ? 4 : 0,
+          opacity: isBloc || selectedAi.length ? 1 : 0.5,
+          cursor: isBloc || selectedAi.length ? "pointer" : "not-allowed",
+        }}
       >
         Iniciar sessão →
       </button>
