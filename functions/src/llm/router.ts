@@ -9,6 +9,7 @@ import {
   ROLES,
   SAFETY_SETTINGS,
   type Role,
+  type ThinkingLevel,
 } from "../config.js";
 import { estimateCostUsd, logBlocked, logCall, logCallFailed, logFailedAttempt, logTruncated } from "../telemetry.js";
 import { LLMError, type LLMProvider, type LLMRequest, type LLMResult } from "./provider.js";
@@ -30,6 +31,9 @@ export interface CallModelOptions {
   systemInstruction: string;
   userContent: string;
   responseJsonSchema?: Record<string, unknown>;
+  // Valida o texto dentro da tentativa (ex.: JSON do juiz). Se lançar, a
+  // resposta conta como transitória ("malformed"): retry e depois reserva.
+  validate?: (text: string) => void;
   // Quando presente, usa streaming e repassa cada pedaço de texto.
   onChunk?: (text: string) => void | Promise<void>;
   debateId?: string;
@@ -49,8 +53,7 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
           model,
           systemInstruction: opts.systemInstruction,
           userContent: opts.userContent,
-          // Alguns modelos não aceitam "minimal" (ex.: 3.8 Flash) — usa "low".
-          thinkingLevel: role.thinkingLevel === "minimal" && !supportsMinimal(model) ? "low" : role.thinkingLevel,
+          thinkingLevel: thinkingFor(model, isFallback ? (role.fallbackThinkingLevel ?? role.thinkingLevel) : role.thinkingLevel),
           maxOutputTokens: role.maxOutputTokens,
           temperature: role.temperature,
           responseJsonSchema: opts.responseJsonSchema,
@@ -61,6 +64,15 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
         };
         const t0 = Date.now();
         const result = opts.onChunk ? await provider.stream(req, opts.onChunk) : await provider.generate(req);
+        if (opts.validate) {
+          try {
+            opts.validate(result.text);
+          } catch (err) {
+            throw err instanceof LLMError
+              ? err
+              : new LLMError(`Resposta inválida: ${(err as Error).message}`, { kind: "malformed", retryable: true });
+          }
+        }
         return { result, latencyMs: Date.now() - t0 };
       },
       {
@@ -129,4 +141,9 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
 
 function supportsMinimal(model: string): boolean {
   return model.includes("flash-lite");
+}
+
+// Alguns modelos não aceitam "minimal" (ex.: 3.8 Flash) — usa "low".
+export function thinkingFor(model: string, level: ThinkingLevel): ThinkingLevel {
+  return level === "minimal" && !supportsMinimal(model) ? "low" : level;
 }

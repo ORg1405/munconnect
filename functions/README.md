@@ -20,10 +20,11 @@ src/
   llm/retry.ts           ← backoff exponencial + jitter → modelo de reserva
   llm/semaphore.ts       ← limite de chamadas simultâneas por instância
   llm/router.ts          ← chamada por papel (opponent/turnAnalysis/summary/report)
+  judgeGuards.ts         ← guardas sobre a saída do juiz (trecho de falácia, "falsa", refutacao no turno 1)
   context.ts             ← prefixo fixo (prompt + dossiê) + resumo + janela de turnos
   quota.ts               ← regras de cota (puras)
   store.ts               ← Firestore (transações de reserva/liberação/conclusão)
-  prompts/               ← opponent.ts, judge.ts, summary.ts, report.ts (provisórios, exceto report)
+  prompts/               ← opponent.ts, judge.ts, summary.ts, report.ts (provisórios, exceto report); tpi.ts (comitê TPI)
   schemas/               ← turnAnalysis.ts, report.ts (responseJsonSchema)
   dossiers/<id>.md       ← dossiê do comitê, carregado inteiro no prefixo (_default.md se faltar)
 scripts/compare-opponent.ts ← compara cenários (modelo + raciocínio) no oponente e no juiz
@@ -69,12 +70,13 @@ Com `-H "Accept: text/event-stream"` a resposta vem em streaming (SSE).
 ```bash
 cd functions
 npm run compare -- --file scripts/compare-args.example.json
-npm run compare -- --file scripts/compare-args.tpi.json --judge   --scenarios gemini-3.1-flash-lite:low,gemini-3.1-flash-lite:minimal,gemini-3.5-flash-lite:low
+npm run compare -- --file scripts/compare-args.tpi.json --judge --scenarios config
+npm run compare -- --file scripts/compare-args.tpi.json --judge --scenarios gemini-3.1-flash-lite:low,gemini-3.5-flash-lite:low
 ```
 
-Cada cenário é `modelo:thinkingLevel`. `--judge` roda também o juiz (análise por turno, com o schema) sobre a réplica do mesmo cenário. `--args 1,3` roda só esses argumentos, `--judge-max-tokens N` troca o teto de saída do juiz e `--out arquivo.json` grava tudo em JSON. Em comitê de blocos (TPI), cada argumento diz o bloco do aluno (`"aluno"`), e o oponente fica com o bloco contrário.
+Cada cenário é `modelo:thinkingLevel`, ou `config`: o caminho de produção (`callModel` com os papéis de `config.ts`, retry, reserva e validação do JSON do juiz). Em todos, a análise passa pelas guardas de `judgeGuards.ts` e o script imprime o que elas corrigiram. Um argumento com `"turns": [...]` roda falas seguidas no mesmo debate (com janela de turnos). `--judge` roda também o juiz (análise por turno, com o schema) sobre a réplica do mesmo cenário. `--args 1,3` roda só esses argumentos, `--judge-max-tokens N` troca o teto de saída do juiz e `--out arquivo.json` grava tudo em JSON. Em comitê de blocos (TPI), cada argumento diz o bloco do aluno (`"aluno"`), e o oponente fica com o bloco contrário.
 
-Faz chamadas reais e cobradas, sem retry. O script também imprime o log `prefix_tokens` (tamanho do prefixo fixo do oponente e do juiz) e avisa se ele estiver abaixo de 4.096 tokens (nesse caso o cache implícito não ativa).
+Faz chamadas reais e cobradas (sem retry, exceto no cenário `config`). O script também imprime o log `prefix_tokens` (tamanho do prefixo fixo do oponente e do juiz) e avisa se ele estiver abaixo de 4.096 tokens (nesse caso o cache implícito não ativa).
 
 ## Capacidade (RPM/TPM) — pico de 200 alunos
 
@@ -86,38 +88,56 @@ Faz chamadas reais e cobradas, sem retry. O script também imprime o log `prefix
 | `T` | segundos entre dois turnos do mesmo aluno | ≥ 20 (`QUOTA.minSecondsBetweenTurns`, contado do início do turno anterior) |
 | `N` | analisar a cada N turnos | 1 (`ANALYSIS.analyzeEveryTurns`) |
 | `S` | resumo a cada S turnos | 3 (`CONTEXT.summaryEveryTurns`) |
-| `L` | latência do oponente | ~3 s (medido: 2–3 s; picos de 10–18 s com retry de rede) |
+| `L` | latência do oponente | ~4,5 s (3.5 Flash-Lite low, compare de 2026-10-18: 3,7–5,1 s) |
+| `J` | latência do juiz | ~7 s (3.1 Flash-Lite low: 6,5–7,6 s sem retry) |
+| `p` | fração de chamadas que caem na reserva | medir em `llm_call` (`isFallback`); 1/8 no compare |
 
-**Fórmulas:**
+**Modelos por papel** (`ROLES` em `src/config.ts`; os limites RPM/TPM são **por modelo**):
 
-```
-turnos/min        = U × 60 / T
-RPM oponente      = turnos/min                      → pool gemini-3.1-flash-lite
-RPM resumo        = turnos/min / S                  → pool gemini-3.1-flash-lite
-RPM análise       = turnos/min / N                  → pool gemini-3.5-flash-lite (modelo separado)
-chamadas em voo   = RPM oponente × L / 60           (concorrência das instâncias)
-TPM entrada       = Σ RPM × tokens de entrada por chamada
-```
-
-**Tokens por chamada.** O cenário "com dossiê real" é o que vale para novembro.
-
-| Chamada | Medido hoje (dossiê placeholder, prefixo ~216 tokens) | Com dossiê real (prefixo P ≈ 4.500) |
+| Papel | Principal | Reserva |
 |---|---|---|
-| Oponente, entrada | 371 (turno 1) → 1.489 (turno 4); regime ≈ P + 2.000 | ≈ 6.500 |
-| Oponente, saída | ~235 visível + ~120 raciocínio (pico raro: 949) | igual |
-| Análise, entrada | 544–785 (P_juiz ≈ 180) | ≈ 5.100 |
+| Oponente | gemini-3.5-flash-lite · low | gemini-3.1-flash-lite · minimal |
+| Resumo | gemini-3.5-flash-lite · low | gemini-3.1-flash-lite · minimal |
+| Análise (juiz) | gemini-3.1-flash-lite · low · 4096 tokens de saída | gemini-3.5-flash-lite · low |
+| Relatório | gemini-3.8-flash · low | gemini-3.5-flash-lite |
+
+**Fórmulas por modelo:**
+
+```
+turnos/min          = U × 60 / T
+RPM oponente        = turnos/min
+RPM resumo          = turnos/min / S
+RPM análise         = turnos/min / N
+
+RPM 3.5 Flash-Lite  = (RPM oponente + RPM resumo) × (1 − p)  +  RPM análise × p
+RPM 3.1 Flash-Lite  =  RPM análise × (1 − p)                 + (RPM oponente + RPM resumo) × p
+(com p ≈ 0 no dia a dia; cada retry no mesmo modelo é +1 requisição nesse pool)
+
+em voo (oponente)   = RPM oponente × L / 60      (concorrência de debateTurn)
+em voo (juiz)       = RPM análise × J / 60       (concorrência de onTurnCreated)
+TPM entrada         = Σ RPM × tokens de entrada por chamada (tokens cacheados contam)
+```
+
+**Tokens por chamada** (dossiê real do TPI; prefixo fixo P ≈ 5.130 no oponente e no juiz):
+
+| Chamada | Medido (turno 1, sem resumo) | Regime (com resumo e janela) |
+|---|---|---|
+| Oponente, entrada | 5.315–5.345; turno 3 do mesmo debate: 5.884 | ≈ P + 2.000 ≈ 7.100 |
+| Oponente, saída | ~225 visível + ~1.090 raciocínio | igual |
+| Análise, entrada | 5.450–5.530 | ≈ 5.500 (não leva a janela) |
+| Análise, saída | ~970 JSON + ~1.280 raciocínio | igual |
 | Resumo, entrada | ≈ 1.300 (estimado: 3 turnos + resumo anterior) | igual (sem dossiê) |
 
 ### (a) Pior caso: todos no intervalo mínimo (T = 20 s)
 
 ```
 turnos/min   = 200 × 60 / 20 = 600
-3.1 Flash-Lite: oponente 600 + resumo 600/3 = 200   → 800 RPM
-3.5 Flash-Lite: análise 600/1                        → 600 RPM
-em voo:        600 × 3 / 60                          → ~30 chamadas simultâneas ao oponente
-TPM (dossiê real):
-  3.1: 600 × 6.500 + 200 × 1.300 = 3,90M + 0,26M     → ~4,2M TPM
-  3.5: 600 × 5.100                                   → ~3,1M TPM
+3.5 Flash-Lite: oponente 600 + resumo 600/3 = 200   → 800 RPM
+3.1 Flash-Lite: análise 600/1                        → 600 RPM
+em voo:        oponente 600 × 4,5 / 60 ≈ 45 · juiz 600 × 7 / 60 = 70
+TPM:
+  3.5: 600 × 7.100 + 200 × 1.300 = 4,26M + 0,26M     → ~4,5M TPM
+  3.1: 600 × 5.500                                   → ~3,3M TPM
 ```
 
 Esse pico dura no máximo ~4 min por debate (12 turnos × 20 s, limite `QUOTA.turnsPerDebate`).
@@ -127,22 +147,22 @@ Esse pico dura no máximo ~4 min por debate (12 turnos × 20 s, limite `QUOTA.tu
 ```
                      T = 60 s                  T = 120 s
 turnos/min           200 × 60/60 = 200         200 × 60/120 = 100
-3.1 (oponente+res.)  200 + 67   = 267 RPM      100 + 33   = 133 RPM
-3.5 (análise)        200 RPM                    100 RPM
-TPM 3.1 (dossiê)     200×6.500 + 67×1.300 ≈ 1,39M     ≈ 0,69M
-TPM 3.5 (dossiê)     200×5.100 ≈ 1,02M                ≈ 0,51M
-em voo (oponente)    ~10                        ~5
+3.5 (oponente+res.)  200 + 67   = 267 RPM      100 + 33   = 133 RPM
+3.1 (análise)        200 RPM                    100 RPM
+TPM 3.5              200×7.100 + 67×1.300 ≈ 1,51M     ≈ 0,75M
+TPM 3.1              200×5.500 ≈ 1,10M                ≈ 0,55M
+em voo (op. / juiz)  ~15 / ~23                  ~8 / ~12
 ```
 
 **Teto diário.** No máximo, cada aluno faz 3 debates × 12 turnos = 36 turnos por dia. Com 200 alunos, isso dá 7.200 turnos por dia:
 
 | Pool | Requisições por dia |
 |---|---|
-| 3.1 Flash-Lite | 7.200 + 2.400 (resumo) = 9.600 |
-| 3.5 Flash-Lite | 7.200 |
+| 3.5 Flash-Lite | 7.200 + 2.400 (resumo) = 9.600 |
+| 3.1 Flash-Lite | 7.200 |
 | 3.8 Flash (relatórios) | 600 |
 
-**Margem.** Cada retry por 429/503 é mais uma requisição. Deixe 20–30% de folga sobre esses números ao conferir os limites do tier no AI Studio. Considere também que tokens cacheados contam no TPM.
+**Margem.** Cada retry é mais uma requisição: por 429/503 e, agora, também por resposta inutilizável (vazia, `MALFORMED_RESPONSE`, `finishReason` inesperado ou JSON inválido do juiz). Se um pool entrar em 429 sustentado, `p` sobe e a carga passa para o outro modelo pelas fórmulas acima. Deixe 20–30% de folga sobre esses números ao conferir os limites do tier no AI Studio.
 
 **Botões para aliviar:**
 - `ANALYSIS.analyzeEveryTurns = 2` corta a RPM da análise pela metade.

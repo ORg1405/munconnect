@@ -11,6 +11,7 @@ import { buildJudgePrompt, buildSummaryPrompt, loadDossier, shouldUpdateSummary,
 import { getProvider } from "../llm/index.js";
 import { LLMError } from "../llm/provider.js";
 import { callModel } from "../llm/router.js";
+import { applyJudgeGuards, parseTurnAnalysis } from "../judgeGuards.js";
 import { TURN_ANALYSIS_SCHEMA } from "../schemas/turnAnalysis.js";
 import { addAsyncUsage, claimTurnAnalysis, loadTurnRange, paths, saveSummary, type DebateDoc } from "../store.js";
 
@@ -47,13 +48,21 @@ async function analyzeTurn(debateId: string, debate: DebateDoc, turn: TurnRecord
       role: "turnAnalysis",
       ...prompt,
       responseJsonSchema: TURN_ANALYSIS_SCHEMA as unknown as Record<string, unknown>,
+      // JSON inválido/truncado → retry e depois reserva, como erro transitório.
+      validate: (text) => void parseTurnAnalysis(text),
       debateId,
     });
-    const analysis = JSON.parse(result.text);
+    const { analysis, report } = applyJudgeGuards(parseTurnAnalysis(result.text), {
+      turnIndex: turn.index,
+      userText: turn.userText,
+      opponentText: turn.opponentText,
+      debateId,
+    });
     await turnRef.update({
       analysis,
       analysisStatus: "done",
       analysisModel: result.model,
+      analysisGuards: report,
       analysisUsage: { ...result.usage, costUsd: result.costUsd },
       analyzedAt: FieldValue.serverTimestamp(),
     });

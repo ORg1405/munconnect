@@ -72,6 +72,8 @@
 4. Autodefesa: as operações em Gaza ocorreram no contexto do direito de autodefesa após o ataque de 7/10/2023. Grupos armados palestinos usariam estruturas civis para fins militares, o que dificulta atribuir de forma direta e individual crimes de guerra à liderança política e militar israelense.
 5. Precedente e papel do Tribunal: emitir mandado contra o chefe de governo de um Estado democrático durante um conflito armado extrapola o papel do TPI e pode limitar o direito de autodefesa de outros Estados.
 6. Estratégia: antes de discutir se as acusações procedem, mostrar que o TPI não teria competência. Se isso for aceito, o mérito deixa de ser analisado.
+- Alegações da Defesa (alegações, não fatos estabelecidos): Israel afirma que facilitou a entrada de ajuda humanitária. Israel e a Defesa alegam que o Hamas desvia ajuda e usa estruturas civis para fins militares. A Acusação e agências da ONU contestam a suficiência do acesso e a alegação de desvio. Não há números verificados nas provas admitidas. O oponente só pode apresentá-las como alegação da Defesa.
+- O critério jurídico de proporcionalidade do art. 8(2)(b)(iv) do Estatuto é dano incidental claramente excessivo em relação à vantagem militar concreta e direta esperada.
 - Pontos de tensão para a Defesa (a partir do que está acima): a jurisdição territorial independe da nacionalidade e já foi afirmada pela Câmara; o desafio do art. 19(2) foi rejeitado por ser prematuro, mas a própria Câmara ressalvou contestações futuras; a complementaridade exige mostrar que o Estado investiga de fato, e Israel foi notificado em 2021; o aviso de evacuação não elimina as demais obrigações do atacante.
 
 ## 9. CONTEXTO PARALELO (não é objeto do julgamento)

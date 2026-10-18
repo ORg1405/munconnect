@@ -26,6 +26,7 @@ export class GeminiProvider implements LLMProvider {
     }
     const text = res.text ?? "";
     assertNotBlocked(res, text);
+    assertUsable(res.candidates?.[0]?.finishReason ?? null, text);
     return {
       text,
       usage: readUsage(res),
@@ -71,6 +72,9 @@ export class GeminiProvider implements LLMProvider {
       throw e;
     }
     if (last) assertNotBlocked(last, text);
+    // Nada entregue → dá para re-tentar. Com texto já entregue, um finishReason
+    // estranho não é re-tentado (o aluno já viu a réplica); fica no log llm_call.
+    if (!text.trim()) assertUsable(last?.candidates?.[0]?.finishReason ?? null, text);
     return {
       text,
       usage,
@@ -122,6 +126,17 @@ function assertNotBlocked(res: GenerateContentResponse, text: string): void {
   throw new LLMError("Resposta bloqueada pelos filtros de segurança", {
     kind: "blocked",
     blockInfo: { reason: String(promptBlock ?? finish), categories },
+  });
+}
+
+// Só STOP e MAX_TOKENS (truncamento, tratado pelo router) são finais esperados.
+const EXPECTED_FINISH = new Set(["STOP", "MAX_TOKENS"]);
+
+export function assertUsable(finishReason: string | null, text: string): void {
+  if (text.trim() && (finishReason === null || EXPECTED_FINISH.has(finishReason))) return;
+  throw new LLMError(`Resposta inutilizável (finishReason ${finishReason ?? "ausente"}, ${text.trim() ? "com" : "sem"} texto)`, {
+    kind: "malformed",
+    retryable: true,
   });
 }
 

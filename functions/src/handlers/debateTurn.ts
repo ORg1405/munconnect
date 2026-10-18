@@ -82,7 +82,8 @@ export async function handleDebateTurn(
       onChunk: streaming ? async (piece) => void (await response!.sendChunk(piece)) : undefined,
     });
     const text = result.text.trim();
-    if (!text) throw new LLMError("Resposta vazia do modelo", { kind: "other" });
+    // Resposta vazia já é re-tentada no provider; isto é só uma rede de segurança.
+    if (!text) throw new LLMError("Resposta vazia do modelo", { kind: "malformed", retryable: true });
 
     await completeTurn({
       uid,

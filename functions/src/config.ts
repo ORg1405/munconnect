@@ -101,6 +101,8 @@ export interface RoleConfig {
   model: string;
   fallbackModel: string | null;
   thinkingLevel: ThinkingLevel;
+  // Raciocínio do modelo de reserva (ausente = o mesmo do principal).
+  fallbackThinkingLevel?: ThinkingLevel;
   // Tokens de raciocínio contam como saída — o teto cobre raciocínio + resposta.
   maxOutputTokens: number;
   temperature: number;
@@ -117,12 +119,15 @@ export interface RoleConfig {
 
 export const ROLES: Record<Role, RoleConfig> = {
   opponent: {
-    // Para testar o 3.8 Flash no oponente, troque SÓ a linha abaixo para
-    // MODEL_IDS.flash38 (lembre: preço dobra em 01/01/2027; não aceita "minimal";
-    // em testes levou 31–114 s por turno).
-    model: MODEL_IDS.flashLite31,
-    fallbackModel: MODEL_IDS.flashLite35,
+    // 3.5 Flash-Lite low: no compare do TPI (2026-10-18) foi o único cenário sem
+    // réplica acima de 180 palavras nem fato fora do dossiê. Reserva: 3.1
+    // Flash-Lite minimal (mais rápido; outro pool de limite).
+    // Para testar o 3.8 Flash, troque SÓ a linha abaixo para MODEL_IDS.flash38
+    // (preço dobra em 01/01/2027; não aceita "minimal"; 31–114 s por turno).
+    model: MODEL_IDS.flashLite35,
+    fallbackModel: MODEL_IDS.flashLite31,
     thinkingLevel: "low",
+    fallbackThinkingLevel: "minimal",
     // Teto de raciocínio + resposta. Com 1024, um turno de teste gastou 949 em
     // raciocínio e a réplica saiu cortada (MAX_TOKENS). Só se paga o que for gerado.
     maxOutputTokens: 2048,
@@ -135,10 +140,12 @@ export const ROLES: Record<Role, RoleConfig> = {
   turnAnalysis: {
     // Modelo SEPARADO do oponente para usar outro pool de limite (RPM/TPM são
     // por modelo): o oponente não disputa cota com a análise.
-    model: MODEL_IDS.flashLite35,
-    fallbackModel: MODEL_IDS.flashLite31,
+    model: MODEL_IDS.flashLite31,
+    fallbackModel: MODEL_IDS.flashLite35,
     thinkingLevel: "low",
-    maxOutputTokens: 2048,
+    // O 3.1 low gasta ~1.400–1.700 tokens raciocinando antes do JSON (~1.100):
+    // com 2048 o JSON saiu cortado em 5/5 testes; com 4096, 0/5.
+    maxOutputTokens: 4096,
     temperature: 0.2,
     timeoutMs: 60_000,
     deadlineMs: 100_000, // < onTurnCreated.timeoutSeconds (120 s)
@@ -146,10 +153,13 @@ export const ROLES: Record<Role, RoleConfig> = {
     serviceTier: "standard",
   },
   summary: {
-    model: MODEL_IDS.flashLite31,
-    fallbackModel: MODEL_IDS.flashLite35,
-    thinkingLevel: "minimal",
-    maxOutputTokens: 600,
+    // Mesmo pool do oponente (3.5), para a análise ficar sozinha no 3.1.
+    model: MODEL_IDS.flashLite35,
+    fallbackModel: MODEL_IDS.flashLite31,
+    thinkingLevel: "low",
+    fallbackThinkingLevel: "minimal",
+    // ~300 tokens de resumo + raciocínio do "low" (até ~1.100 no oponente).
+    maxOutputTokens: 2048,
     temperature: 0.2,
     timeoutMs: 30_000,
     deadlineMs: 100_000, // < onTurnCreated.timeoutSeconds (120 s)

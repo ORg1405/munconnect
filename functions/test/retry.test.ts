@@ -14,7 +14,7 @@ const { callModel } = await import("../src/llm/router.js");
 const { backoffDelay, withRetryAndFallback } = await import("../src/llm/retry.js");
 const { LLMError } = await import("../src/llm/provider.js");
 const { Semaphore, SemaphoreTimeoutError } = await import("../src/llm/semaphore.js");
-const { RETRY, ROLES } = await import("../src/config.js");
+const { MODEL_IDS, RETRY, ROLES } = await import("../src/config.js");
 const { estimateCostUsd } = await import("../src/telemetry.js");
 
 function apiError(status: number) {
@@ -72,8 +72,8 @@ describe("callModel com Gemini mockado", () => {
     expect(r.usedFallback).toBe(false);
     expect(sleeps).toEqual([]);
     expect(r.usage).toEqual({ inputTokens: 1000, outputTokens: 100, thoughtsTokens: 50, cachedTokens: 400 });
-    // 600 × 0.25 + 400 × 0.025 + 150 × 1.5 (por 1M)
-    expect(r.costUsd).toBeCloseTo((600 * 0.25 + 400 * 0.025 + 150 * 1.5) / 1e6, 9);
+    // Oponente no 3.5 Flash-Lite: 600 × 0.3 + 400 × 0.03 + 150 × 2.5 (por 1M)
+    expect(r.costUsd).toBeCloseTo((600 * 0.3 + 400 * 0.03 + 150 * 2.5) / 1e6, 9);
     const req = generateContent.mock.calls[0][0];
     expect(req.model).toBe(ROLES.opponent.model);
     expect(req.config.systemInstruction).toBe("SYS");
@@ -167,10 +167,54 @@ describe("callModel com Gemini mockado", () => {
     expect((await callModel(provider, { role: "opponent", ...base })).truncated).toBe(false);
   });
 
-  it("resumo usa thinking 'minimal' no Flash-Lite (chamada barata)", async () => {
-    generateContent.mockResolvedValueOnce(okResponse("x"));
-    await callModel(provider, { role: "summary", ...base });
-    expect(generateContent.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: "MINIMAL" });
+  it("reserva usa o próprio thinkingLevel (oponente: 3.5 low → 3.1 minimal)", async () => {
+    for (let i = 0; i < RETRY.maxAttempts; i++) generateContent.mockRejectedValueOnce(apiError(503));
+    generateContent.mockResolvedValueOnce(okResponse("x", ROLES.opponent.fallbackModel!));
+    await callModel(provider, { role: "opponent", ...base });
+    const calls = generateContent.mock.calls.map((c) => [c[0].model, c[0].config.thinkingConfig.thinkingLevel]);
+    expect(calls[0]).toEqual([MODEL_IDS.flashLite35, "LOW"]);
+    expect(calls[RETRY.maxAttempts]).toEqual([MODEL_IDS.flashLite31, "MINIMAL"]);
+  });
+
+  it("MALFORMED_RESPONSE, resposta vazia e finishReason inesperado são re-tentados", async () => {
+    generateContent
+      .mockResolvedValueOnce({ text: "", candidates: [{ finishReason: "MALFORMED_RESPONSE" }], usageMetadata: {} })
+      .mockResolvedValueOnce({ ...okResponse("  "), candidates: [{ finishReason: "STOP" }] })
+      .mockResolvedValueOnce({ ...okResponse("meia frase"), candidates: [{ finishReason: "OTHER" }] })
+      .mockResolvedValueOnce(okResponse("ok"));
+    const r = await callModel(provider, { role: "opponent", ...base });
+    expect(r.text).toBe("ok");
+    expect(generateContent).toHaveBeenCalledTimes(4);
+  });
+
+  it("resposta inutilizável no principal inteiro → cai na reserva", async () => {
+    generateContent.mockImplementation(async (req: { model: string }) =>
+      req.model === ROLES.opponent.fallbackModel
+        ? okResponse("reserva", req.model)
+        : { text: "", candidates: [{ finishReason: "MALFORMED_RESPONSE" }], usageMetadata: {} },
+    );
+    const r = await callModel(provider, { role: "opponent", ...base });
+    expect(r).toMatchObject({ text: "reserva", usedFallback: true });
+  });
+
+  it("streaming: resposta vazia antes de qualquer chunk é re-tentada", async () => {
+    generateContentStream.mockResolvedValueOnce(streamOf("")).mockResolvedValueOnce(streamOf("Olá."));
+    const r = await callModel(provider, { role: "opponent", ...base, onChunk: () => undefined });
+    expect(r.text).toBe("Olá.");
+    expect(generateContentStream).toHaveBeenCalledTimes(2);
+  });
+
+  it("validate: JSON inválido do juiz (ou truncado) conta como transitório", async () => {
+    generateContent
+      .mockResolvedValueOnce({ ...okResponse('{"turno": 1, "argu'), candidates: [{ finishReason: "MAX_TOKENS" }] })
+      .mockResolvedValueOnce(okResponse('{"ok":true}'));
+    const r = await callModel(provider, { role: "turnAnalysis", ...base, validate: (t) => void JSON.parse(t) });
+    expect(r.text).toBe('{"ok":true}');
+    expect(sleeps).toEqual([1000]);
+  });
+
+  it("análise: 3.1 Flash-Lite low com teto de 4096; reserva 3.5", () => {
+    expect(ROLES.turnAnalysis).toMatchObject({ model: MODEL_IDS.flashLite31, thinkingLevel: "low", maxOutputTokens: 4096, fallbackModel: MODEL_IDS.flashLite35 });
   });
 });
 

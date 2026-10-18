@@ -1,8 +1,8 @@
 // Schema da análise por turno (juiz). Fonte: docs/prompts-tpi.md, seção 3.
-// Passado ao Gemini como responseJsonSchema. Adaptação ao SDK: só
+// Passado ao Gemini como responseJsonSchema. Adaptações ao original:
 // additionalProperties: false em cada objeto (mesma convenção dos outros
-// schemas); enums, limites da rubrica e maxItems: 3 nas melhorias são os do
-// original.
+// schemas) e rubrica.refutacao nullable (null no turno 1; ver judgeGuards.ts).
+// Enums, limites da rubrica e maxItems: 3 nas melhorias são os do original.
 
 const rubricItem = { type: "integer", minimum: 0, maximum: 5 };
 const str = { type: "string" };
@@ -79,7 +79,9 @@ export const TURN_ANALYSIS_SCHEMA = {
     },
     rubrica: {
       type: "object",
-      properties: Object.fromEntries(RUBRIC_KEYS.map((k) => [k, rubricItem])),
+      properties: Object.fromEntries(
+        RUBRIC_KEYS.map((k) => [k, k === "refutacao" ? { ...rubricItem, type: ["integer", "null"] } : rubricItem]),
+      ),
       required: [...RUBRIC_KEYS],
       additionalProperties: false,
     },
@@ -123,7 +125,7 @@ export interface TurnAnalysis {
     confianca: (typeof FALLACY_CONFIDENCE)[number];
     explicacao: string;
   }>;
-  rubrica: Record<(typeof RUBRIC_KEYS)[number], number>;
+  rubrica: Record<Exclude<(typeof RUBRIC_KEYS)[number], "refutacao">, number> & { refutacao: number | null };
   pontos_fortes: string[];
   melhorias_prioritarias: string[];
   sugestao_de_replica: string;

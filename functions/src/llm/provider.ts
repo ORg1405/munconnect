@@ -38,7 +38,9 @@ export interface LLMResult {
   serviceTier: string | null;
 }
 
-export type LLMErrorKind = "rate_limit" | "unavailable" | "network" | "timeout" | "blocked" | "bad_request" | "other";
+// "malformed": resposta inutilizável (vazia, MALFORMED_RESPONSE, finishReason
+// inesperado, JSON inválido) — transitória: retry e depois reserva.
+export type LLMErrorKind = "rate_limit" | "unavailable" | "network" | "timeout" | "blocked" | "malformed" | "bad_request" | "other";
 
 export class LLMError extends Error {
   readonly kind: LLMErrorKind;
