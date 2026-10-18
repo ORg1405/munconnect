@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { QUOTA } from "../../functions/src/config";
 import { findCommitteeById } from "../data/munCommittees";
-import { blocDebateSetup, isBlocCommittee, opposingBloc } from "./debateUi";
+import { MIN_USER_TURNS_FOR_REPORT, blocDebateSetup, canEndDebate, isBlocCommittee, opposingBloc, reportErrorMessage } from "./debateUi";
 
 const tpi = findCommitteeById("TPI");
 const [acusacao, defesa] = tpi.blocs;
@@ -34,5 +35,29 @@ describe("comitês de blocos", () => {
       nivelDelegado: "Não informado",
       simsAnteriores: null,
     });
+  });
+});
+
+describe("encerrar o debate (regra das 4 falas)", () => {
+  it("só libera com 4 ou mais falas do aluno", () => {
+    expect([0, 1, 3].map(canEndDebate)).toEqual([false, false, false]);
+    expect([4, 5, 12].map(canEndDebate)).toEqual([true, true, true]);
+  });
+
+  it("o mínimo é o mesmo do backend (QUOTA.minUserTurnsForReport)", () => {
+    expect(MIN_USER_TURNS_FOR_REPORT).toBe(QUOTA.minUserTurnsForReport);
+  });
+
+  it("valores inválidos não liberam", () => {
+    expect(canEndDebate(undefined)).toBe(false);
+    expect(canEndDebate(4.5)).toBe(false);
+    expect(canEndDebate("4")).toBe(false);
+  });
+
+  it("mensagens de erro do relatório sem detalhe técnico", () => {
+    expect(reportErrorMessage({ reason: "too-few-turns" })).toMatch(/pelo menos 4 falas/);
+    expect(reportErrorMessage({ reason: "stale" })).toMatch(/Tente de novo/);
+    expect(reportErrorMessage({ code: "internal", message: "Error: 13 INTERNAL" })).not.toMatch(/INTERNAL/);
+    expect(reportErrorMessage(null)).toMatch(/Tente de novo/);
   });
 });

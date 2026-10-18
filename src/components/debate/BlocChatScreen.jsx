@@ -5,13 +5,16 @@
 // erro de rede, cota ou reenvio ele continua na caixa de texto.
 
 import { useEffect, useRef, useState } from "react";
+import { useDebateReport } from "../../hooks/useDebateReport";
 import { useDebateTurn } from "../../hooks/useDebateTurn";
 import { useSpeechInput } from "../../hooks/useSpeechInput";
 import { useTurnAnalyses } from "../../hooks/useTurnAnalyses";
 import { MessageBubble, TypingIndicator } from "./Bubbles";
 import DisputeControl from "./DisputeControl";
 import JudgePanel from "./JudgePanel";
-import { GHOST_BTN, INPUT, PRIMARY_BTN } from "./styles";
+import ReportPanel from "./ReportPanel";
+import { canEndDebate } from "../../lib/debateUi";
+import { CARD, GHOST_BTN, GOLD_BTN, GOLD_OUTLINE_BTN, INPUT, PRIMARY_BTN } from "./styles";
 
 const FORMULATING = "O delegado está formulando a resposta";
 
@@ -19,9 +22,12 @@ export default function BlocChatScreen({ session, onExit }) {
   const { committee, topic, userBloc, aiBloc, setup } = session;
   const { debateId, send, pending, streamingText, error } = useDebateTurn({ committeeId: committee.id, setup });
   const analyses = useTurnAnalyses(debateId);
+  const report = useDebateReport(debateId);
   const [turns, setTurns] = useState([]); // [{ index, userText, opponentText }]
   const [draft, setDraft] = useState("");
   const [sendingText, setSendingText] = useState(null); // fala em envio (bolha provisória)
+  const [showEndModal, setShowEndModal] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const scrollRef = useRef(null);
   // Ditado: cada trecho final entra no fim do rascunho, que segue editável.
   const speech = useSpeechInput({
@@ -31,7 +37,17 @@ export default function BlocChatScreen({ session, onExit }) {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [turns, pending, streamingText, analyses]);
+  }, [turns, pending, streamingText, analyses, reportOpen, report.status]);
+
+  // Relatório já pedido (ou pronto, ao reabrir o debate): a sessão fica encerrada.
+  const showReport = reportOpen || report.status === "done";
+  const canEnd = canEndDebate(turns.length) && !pending && !showReport;
+
+  function confirmEnd() {
+    setShowEndModal(false);
+    setReportOpen(true);
+    report.generate();
+  }
 
   async function submit() {
     const text = draft.trim();
@@ -84,6 +100,15 @@ export default function BlocChatScreen({ session, onExit }) {
             <span><span style={{ color: "var(--brand-400)" }}>vs:</span> {aiBloc.name}</span>
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            {canEnd && (
+              <button
+                className="btn-gold-outline"
+                onClick={() => setShowEndModal(true)}
+                style={{ ...GOLD_OUTLINE_BTN, padding: "5px 12px", fontSize: "var(--fs-tiny)" }}
+              >
+                Encerrar e gerar relatório
+              </button>
+            )}
             <button onClick={onExit} style={{ ...GHOST_BTN, padding: "5px 12px", fontSize: "var(--fs-tiny)" }}>
               ↺ Nova sessão
             </button>
@@ -130,75 +155,109 @@ export default function BlocChatScreen({ session, onExit }) {
         ) : (
           <TypingIndicator country={aiBloc} label={`${FORMULATING}…`} />
         ))}
+
+        {showReport && (
+          <ReportPanel report={report} onRetry={report.generate} onBack={() => setReportOpen(false)} onExit={onExit} />
+        )}
       </div>
 
-      {error && !pending && (
-        <p
-          role="status"
-          style={{ fontSize: "var(--fs-small)", color: busy ? "var(--text-secondary)" : "var(--danger)", margin: "8px 0", fontFamily: "var(--font-mono)" }}
-        >
-          {busy ? `${FORMULATING}. Sua fala continua na caixa abaixo: envie de novo em alguns segundos.` : error.message}
-        </p>
+      {!showReport && (
+        <>
+          {error && !pending && (
+            <p
+              role="status"
+              style={{ fontSize: "var(--fs-small)", color: busy ? "var(--text-secondary)" : "var(--danger)", margin: "8px 0", fontFamily: "var(--font-mono)" }}
+            >
+              {busy ? `${FORMULATING}. Sua fala continua na caixa abaixo: envie de novo em alguns segundos.` : error.message}
+            </p>
+          )}
+
+          {/* Input */}
+          <div style={{
+            display: "flex",
+            gap: 10,
+            marginTop: 12,
+            padding: "12px",
+            background: "var(--bg-elevated)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-card)",
+            flexShrink: 0,
+          }}>
+            {speech.supported && (
+              <button
+                type="button"
+                onClick={speech.listening ? speech.stop : speech.start}
+                aria-pressed={speech.listening}
+                title={speech.listening ? "Parar o ditado" : "Ditar pelo microfone (pt-BR)"}
+                style={{
+                  ...GHOST_BTN,
+                  alignSelf: "stretch",
+                  color: speech.listening ? "var(--accent-400)" : "var(--text-secondary)",
+                  borderColor: speech.listening ? "var(--accent-400)" : "var(--border)",
+                }}
+              >
+                {speech.listening ? "■ Parar" : "🎙 Falar"}
+              </button>
+            )}
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={onKey}
+              placeholder="Sua prova e a explicação…  (Enter = enviar · Shift+Enter = nova linha)"
+              rows={3}
+              maxLength={2000}
+              style={{ ...INPUT, resize: "none", fontFamily: "var(--font-mono)", fontSize: "var(--fs-small)", lineHeight: 1.5 }}
+            />
+            <button
+              onClick={submit}
+              disabled={pending || !draft.trim()}
+              style={{
+                ...PRIMARY_BTN,
+                opacity: pending || !draft.trim() ? 0.5 : 1,
+                cursor: pending || !draft.trim() ? "not-allowed" : "pointer",
+                alignSelf: "stretch",
+              }}
+            >
+              {pending ? "…" : error ? "Reenviar" : "Enviar"}
+            </button>
+          </div>
+          <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", margin: "6px 4px 0", minHeight: "1.2em" }}>
+            {speech.error
+              ? speech.error
+              : speech.listening
+                ? `Ouvindo… ${speech.interim}`
+                : !speech.supported
+                  ? "Ditado por voz indisponível neste navegador: digite sua fala."
+                  : "Use o microfone ou digite; revise o texto antes de enviar."}
+          </p>
+        </>
       )}
 
-      {/* Input */}
-      <div style={{
-        display: "flex",
-        gap: 10,
-        marginTop: 12,
-        padding: "12px",
-        background: "var(--bg-elevated)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-card)",
-        flexShrink: 0,
-      }}>
-        {speech.supported && (
-          <button
-            type="button"
-            onClick={speech.listening ? speech.stop : speech.start}
-            aria-pressed={speech.listening}
-            title={speech.listening ? "Parar o ditado" : "Ditar pelo microfone (pt-BR)"}
-            style={{
-              ...GHOST_BTN,
-              alignSelf: "stretch",
-              color: speech.listening ? "var(--accent-400)" : "var(--text-secondary)",
-              borderColor: speech.listening ? "var(--accent-400)" : "var(--border)",
-            }}
-          >
-            {speech.listening ? "■ Parar" : "🎙 Falar"}
-          </button>
-        )}
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={onKey}
-          placeholder="Sua prova e a explicação…  (Enter = enviar · Shift+Enter = nova linha)"
-          rows={3}
-          maxLength={2000}
-          style={{ ...INPUT, resize: "none", fontFamily: "var(--font-mono)", fontSize: "var(--fs-small)", lineHeight: 1.5 }}
-        />
-        <button
-          onClick={submit}
-          disabled={pending || !draft.trim()}
-          style={{
-            ...PRIMARY_BTN,
-            opacity: pending || !draft.trim() ? 0.5 : 1,
-            cursor: pending || !draft.trim() ? "not-allowed" : "pointer",
-            alignSelf: "stretch",
-          }}
+      {/* Modal de confirmação de encerramento */}
+      {showEndModal && (
+        <div
+          className="modal-overlay"
+          onClick={() => setShowEndModal(false)}
+          style={{ position: "fixed", inset: 0, background: "hsl(210 42% 3% / 0.72)", display: "flex", alignItems: "center", justifyContent: "center", padding: 20, zIndex: 100 }}
         >
-          {pending ? "…" : error ? "Reenviar" : "Enviar"}
-        </button>
-      </div>
-      <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", margin: "6px 4px 0", minHeight: "1.2em" }}>
-        {speech.error
-          ? speech.error
-          : speech.listening
-            ? `Ouvindo… ${speech.interim}`
-            : !speech.supported
-              ? "Ditado por voz indisponível neste navegador: digite sua fala."
-              : "Use o microfone ou digite; revise o texto antes de enviar."}
-      </p>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ ...CARD, maxWidth: 440, width: "100%", padding: 28 }}>
+            <h3 style={{ fontSize: "var(--fs-h3)", fontFamily: "var(--font-ui)", fontWeight: 700, color: "var(--text-primary)", margin: "0 0 12px" }}>
+              Encerrar sessão
+            </h3>
+            <p style={{ fontSize: "var(--fs-small)", color: "var(--text-secondary)", lineHeight: 1.6, margin: "0 0 24px" }}>
+              O debate será encerrado e um relatório da sua atuação será gerado. Isso pode levar até 2 minutos.
+            </p>
+            <div style={{ display: "flex", gap: 10, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowEndModal(false)} style={{ ...GHOST_BTN, padding: "9px 18px" }}>
+                Cancelar
+              </button>
+              <button onClick={confirmEnd} style={{ ...GOLD_BTN, padding: "9px 18px", fontSize: "var(--fs-small)" }}>
+                Encerrar e gerar relatório
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

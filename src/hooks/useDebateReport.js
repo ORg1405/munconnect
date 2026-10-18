@@ -1,7 +1,7 @@
 // Hook do relatório final: dispara debateReport e acompanha o status pelo
 // Firestore, para a UI mostrar "gerando relatório…" mesmo que a chamada passe
-// do timeout do cliente ou a página seja recarregada no meio. Ainda não usado
-// pela tela atual.
+// do timeout do cliente ou a página seja recarregada no meio. Usado por
+// components/debate/BlocChatScreen.jsx (ReportPanel).
 //
 // status: "idle" | "generating" | "done" | "error"
 
