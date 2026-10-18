@@ -3,6 +3,8 @@ import { MUN_COUNTRIES, findCountryByCode } from "../data/munCountries";
 import { MUN_COMMITTEES, findCommitteeById } from "../data/munCommittees";
 import { CARD, GHOST_BTN, GOLD_BTN, GOLD_OUTLINE_BTN, INPUT, PRIMARY_BTN, SECTION_LABEL } from "./debate/styles";
 import { blocDebateSetup, isBlocCommittee, opposingBloc } from "../lib/debateUi";
+import { MessageBubble, TypingIndicator } from "./debate/Bubbles";
+import BlocChatScreen from "./debate/BlocChatScreen";
 
 // ─── Setup screen ──────────────────────────────────────────────────────────
 function SetupScreen({ onStart }) {
@@ -433,86 +435,6 @@ function SetupScreen({ onStart }) {
 }
 
 // ─── Chat screen ───────────────────────────────────────────────────────────
-function MessageBubble({ entry, isUser }) {
-  const { country, text } = entry;
-  return (
-    <div style={{ display: "flex", justifyContent: isUser ? "flex-end" : "flex-start" }} className="anim-fade-up">
-      <div style={{
-        maxWidth: "78%",
-        background: isUser
-          ? "color-mix(in hsl, var(--brand-500) 15%, transparent)"
-          : "var(--bg-overlay)",
-        border: `1px solid ${isUser ? "color-mix(in hsl, var(--brand-500) 30%, transparent)" : "var(--border)"}`,
-        borderRadius: isUser ? "12px 4px 12px 12px" : "4px 12px 12px 12px",
-        padding: "10px 14px",
-      }}>
-        <div style={{
-          fontSize: "0.68rem",
-          color: "var(--text-muted)",
-          marginBottom: 5,
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-        }}>
-          <span style={{
-            fontFamily: "var(--font-mono)",
-            color: "var(--brand-400)",
-            background: "var(--bg-base)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            padding: "0px 5px",
-            fontSize: "0.62rem",
-            letterSpacing: "0.04em",
-          }}>{country.code2}</span>
-          <span style={{ fontFamily: "var(--font-mono)" }}>{country.name}</span>
-        </div>
-        <p style={{
-          fontSize: "var(--fs-small)",
-          color: "var(--text-primary)",
-          margin: 0,
-          lineHeight: 1.6,
-          whiteSpace: "pre-wrap",
-        }}>{text}</p>
-      </div>
-    </div>
-  );
-}
-
-function TypingIndicator({ country }) {
-  return (
-    <div style={{ display: "flex", justifyContent: "flex-start" }}>
-      <div style={{
-        background: "var(--bg-overlay)",
-        border: "1px solid var(--border)",
-        borderRadius: "4px 12px 12px 12px",
-        padding: "10px 14px",
-      }}>
-        <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginBottom: 5, display: "flex", alignItems: "center", gap: 6 }}>
-          <span style={{
-            fontFamily: "var(--font-mono)", color: "var(--brand-400)",
-            background: "var(--bg-base)", border: "1px solid var(--border)",
-            borderRadius: 4, padding: "0px 5px", fontSize: "0.62rem", letterSpacing: "0.04em",
-          }}>{country.code2}</span>
-          <span style={{ fontFamily: "var(--font-mono)" }}>{country.name}</span>
-        </div>
-        <div style={{ display: "flex", gap: 4, alignItems: "center", height: 14 }}>
-          {[0, 1, 2].map((i) => (
-            <span
-              key={i}
-              style={{
-                width: 5, height: 5, borderRadius: "50%",
-                background: "var(--brand-400)",
-                animation: `blink 1.2s ease-in-out ${i * 0.18}s infinite`,
-                display: "block",
-              }}
-            />
-          ))}
-        </div>
-      </div>
-    </div>
-  );
-}
-
 function ChatScreen({ session, onExit }) {
   const { userCountry, committee, topic, difficulty, aiDelegations } = session;
   const [history, setHistory] = useState([]); // [{role, country, text}]
@@ -786,5 +708,6 @@ export default function DebateTrainer() {
   const [session, setSession] = useState(null);
 
   if (!session) return <SetupScreen onStart={setSession} />;
+  if (session.kind === "blocs") return <BlocChatScreen session={session} onExit={() => setSession(null)} />;
   return <ChatScreen session={session} onExit={() => setSession(null)} />;
 }

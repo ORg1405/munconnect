@@ -1,6 +1,6 @@
 // Hook mínimo sobre services/debateAI.js — guarda o debateId entre turnos,
 // expõe o texto em streaming e o erro (incluindo cota) para a UI renderizar.
-// Ainda não usado pela tela atual.
+// Usado por components/debate/BlocChatScreen.jsx.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { sendDebateTurn } from "../services/debateAI";

@@ -1,6 +1,6 @@
 // Cliente dos callables de IA do Debate Trainer (Cloud Functions debateTurn /
-// debateReport). Ainda NÃO é usado pela tela atual — o DebateTrainer continua
-// chamando /api/debate até a troca.
+// debateReport). Usado pelos comitês de blocos (TPI, em
+// components/debate/BlocChatScreen.jsx); os demais comitês seguem em /api/debate.
 //
 // sendDebateTurn usa httpsCallable(...).stream(): os pedaços da réplica chegam
 // por onChunk; a Promise resolve com o resultado final (texto completo, uso,
