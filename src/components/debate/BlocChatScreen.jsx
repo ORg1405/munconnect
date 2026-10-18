@@ -6,6 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useDebateTurn } from "../../hooks/useDebateTurn";
+import { useSpeechInput } from "../../hooks/useSpeechInput";
 import { MessageBubble, TypingIndicator } from "./Bubbles";
 import { GHOST_BTN, INPUT, PRIMARY_BTN } from "./styles";
 
@@ -18,6 +19,11 @@ export default function BlocChatScreen({ session, onExit }) {
   const [draft, setDraft] = useState("");
   const [sendingText, setSendingText] = useState(null); // fala em envio (bolha provisória)
   const scrollRef = useRef(null);
+  // Ditado: cada trecho final entra no fim do rascunho, que segue editável.
+  const speech = useSpeechInput({
+    lang: "pt-BR",
+    onFinal: (text) => text && setDraft((d) => (d && !/\s$/.test(d) ? `${d} ${text}` : `${d}${text}`)),
+  });
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
@@ -26,6 +32,7 @@ export default function BlocChatScreen({ session, onExit }) {
   async function submit() {
     const text = draft.trim();
     if (!text || pending) return;
+    speech.stop();
     setSendingText(text);
     const result = await send(text);
     setSendingText(null);
@@ -133,6 +140,22 @@ export default function BlocChatScreen({ session, onExit }) {
         borderRadius: "var(--radius-card)",
         flexShrink: 0,
       }}>
+        {speech.supported && (
+          <button
+            type="button"
+            onClick={speech.listening ? speech.stop : speech.start}
+            aria-pressed={speech.listening}
+            title={speech.listening ? "Parar o ditado" : "Ditar pelo microfone (pt-BR)"}
+            style={{
+              ...GHOST_BTN,
+              alignSelf: "stretch",
+              color: speech.listening ? "var(--accent-400)" : "var(--text-secondary)",
+              borderColor: speech.listening ? "var(--accent-400)" : "var(--border)",
+            }}
+          >
+            {speech.listening ? "■ Parar" : "🎙 Falar"}
+          </button>
+        )}
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
@@ -155,6 +178,15 @@ export default function BlocChatScreen({ session, onExit }) {
           {pending ? "…" : error ? "Reenviar" : "Enviar"}
         </button>
       </div>
+      <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", margin: "6px 4px 0", minHeight: "1.2em" }}>
+        {speech.error
+          ? speech.error
+          : speech.listening
+            ? `Ouvindo… ${speech.interim}`
+            : !speech.supported
+              ? "Ditado por voz indisponível neste navegador: digite sua fala."
+              : "Use o microfone ou digite; revise o texto antes de enviar."}
+      </p>
     </div>
   );
 }
