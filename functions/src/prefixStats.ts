@@ -37,7 +37,13 @@ export function logPrefixTokensOnce(provider: LLMProvider, info: PrefixInfo): Pr
     .catch((err) => {
       // Falhou a contagem: tenta de novo numa próxima requisição.
       logged.delete(key);
-      logger.warn("prefix_tokens_failed", { role: info.role, committeeId: info.committeeId, model: info.model, kind: err?.kind ?? "other" });
+      logger.warn("prefix_tokens_failed", {
+        role: info.role,
+        committeeId: info.committeeId,
+        model: info.model,
+        kind: err?.kind ?? "other",
+        ...(err?.status == null && err?.detail ? { detail: err.detail } : {}),
+      });
     });
 }
 

@@ -9,10 +9,10 @@ vi.mock("@google/genai", () => ({
   },
 }));
 
-const { GeminiProvider, toLLMError } = await import("../src/llm/gemini.js");
+const { GeminiProvider, apiKeyProblem, toLLMError } = await import("../src/llm/gemini.js");
 const { callModel } = await import("../src/llm/router.js");
 const { backoffDelay, withRetryAndFallback } = await import("../src/llm/retry.js");
-const { LLMError } = await import("../src/llm/provider.js");
+const { LLMError, errorDetail, redactSecrets } = await import("../src/llm/provider.js");
 const { Semaphore, SemaphoreTimeoutError } = await import("../src/llm/semaphore.js");
 const { MODEL_IDS, RETRY, ROLES } = await import("../src/config.js");
 const { estimateCostUsd } = await import("../src/telemetry.js");
@@ -353,5 +353,59 @@ describe("estimateCostUsd", () => {
   });
   it("modelo sem preço configurado → 0", () => {
     expect(estimateCostUsd("modelo-desconhecido", usage, "standard")).toBe(0);
+  });
+});
+
+describe("chave da API e erros sem status", () => {
+  const fakeKey = "AIzaSyFAKE_fake-0123456789abcdefghijklmn";
+  const undiciHeaderError = () =>
+    Object.assign(new TypeError("fetch failed"), {
+      cause: Object.assign(new Error("invalid x-goog-api-key header"), { name: "InvalidArgumentError", code: "UND_ERR_INVALID_ARG" }),
+    });
+
+  it("apiKeyProblem: ausente, vazia, caractere de controle (Ctrl+V) e chave válida", () => {
+    expect(apiKeyProblem(undefined)).toMatch(/ausente/);
+    expect(apiKeyProblem("  ")).toMatch(/vazia/);
+    expect(apiKeyProblem("\u0016")).toMatch(/1 caractere\(s\).*Ctrl\+V/);
+    expect(apiKeyProblem(`${fakeKey} `)).toMatch(/inválida/);
+    expect(apiKeyProblem(fakeKey)).toBeNull();
+  });
+
+  it("GeminiProvider com chave inválida falha na hora, como erro de configuração", () => {
+    expect(() => new GeminiProvider("\u0016")).toThrow(expect.objectContaining({ kind: "config", retryable: false }));
+    expect(() => new GeminiProvider(undefined)).toThrow(/GEMINI_API_KEY ausente/);
+  });
+
+  it("fetch recusando o cabeçalho vira 'config' (não re-tenta), com nome, mensagem e cause", () => {
+    const e = toLLMError(undiciHeaderError());
+    expect(e).toMatchObject({ kind: "config", retryable: false, status: null });
+    expect(e.detail).toEqual({
+      name: "TypeError",
+      message: "fetch failed",
+      cause: { name: "InvalidArgumentError", code: "UND_ERR_INVALID_ARG", message: "invalid x-goog-api-key header" },
+    });
+  });
+
+  it("rede de verdade continua 'network' e re-tentável, agora com o detalhe", () => {
+    const e = toLLMError(Object.assign(new TypeError("fetch failed"), { cause: Object.assign(new Error("connect ECONNREFUSED"), { code: "ECONNREFUSED" }) }));
+    expect(e).toMatchObject({ kind: "network", retryable: true });
+    expect(e.detail?.cause).toEqual({ name: "Error", code: "ECONNREFUSED", message: "connect ECONNREFUSED" });
+  });
+
+  it("a chave nunca aparece na mensagem nem no detalhe", () => {
+    const err = Object.assign(new Error(`falhou em https://x/v1?key=${fakeKey}&alt=sse com ${fakeKey}`), {
+      cause: new Error(`cabeçalho ${fakeKey}`),
+    });
+    const e = toLLMError(err, fakeKey);
+    for (const text of [e.message, e.detail!.message, e.detail!.cause!.message!]) expect(text).not.toContain(fakeKey);
+    expect(redactSecrets(`x ${fakeKey} y`)).not.toContain(fakeKey); // mesmo sem passar a chave (padrão AIza…)
+    expect(errorDetail("texto solto").message).toBe("texto solto");
+  });
+
+  it("callModel: erro de configuração não gasta retry nem reserva", async () => {
+    generateContent.mockRejectedValue(undiciHeaderError());
+    await expect(callModel(provider, { role: "opponent", ...base })).rejects.toMatchObject({ kind: "config" });
+    expect(generateContent).toHaveBeenCalledTimes(1);
+    expect(sleeps).toEqual([]);
   });
 });

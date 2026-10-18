@@ -44,7 +44,10 @@ npm run typecheck
 
 1. `functions/.env.local` (copie de `.env.local.example`): `ENFORCE_APP_CHECK=false`
 2. `functions/.secret.local` (gitignored), uma linha: `GEMINI_API_KEY=sua-chave`
-   (o emulador chama o Gemini **de verdade**; só Auth/Firestore/Functions são emulados)
+   (o emulador chama o Gemini **de verdade**; só Auth/Firestore/Functions são emulados).
+   Confira com `npm --prefix functions run check:gemini`: valida o formato e faz um `countTokens` real, sem imprimir a chave.
+   Cuidado ao colar no terminal: um Ctrl+V que não cola grava o caractere de controle U+0016 no lugar da chave
+   (o `check:gemini` acusa "caractere de controle"). O emulador só lê o arquivo ao subir: depois de corrigir, reinicie-o.
 3. Na raiz do repo:
    ```bash
    npm --prefix functions run build
@@ -54,6 +57,9 @@ npm run typecheck
 4. Frontend contra o emulador: no `.env.local` da raiz, `VITE_USE_EMULATORS=true`, e depois `npm run dev`.
    (Atenção: com isso o login passa a usar o Auth emulado. Crie um usuário na UI do emulador.)
 5. Para recompilar a cada mudança: `npm --prefix functions run build:watch` (o emulador recarrega sozinho).
+6. Primeira fala de ponta a ponta, sem abrir o app: `npm --prefix functions run smoke:turn` (cria um usuário no Auth emulado e chama `debateTurn` com um setup do TPI).
+
+Use Node 22 (o mesmo do deploy, `engines` em `package.json`); o emulador roda em Node 24, mas avisa da diferença.
 
 Chamada manual (protocolo callable, sem streaming), com um ID token do Auth emulado:
 
@@ -238,8 +244,9 @@ Nenhum desses logs inclui o texto do aluno:
 | Log | Quando aparece | O que registra |
 |---|---|---|
 | `llm_call` | cada chamada | modelo, tokens de entrada/saída/raciocínio/cache, latência, custo estimado, debateId |
-| `llm_attempt_failed` | cada falha transitória | tipo e status da falha |
-| `llm_call_failed` | quando a chamada falha de vez, depois do retry e do modelo de reserva | — |
+| `llm_attempt_failed` | cada falha transitória | tipo e status da falha; sem status HTTP, também `detail` (nome, mensagem e `cause` do erro, sem a chave) |
+| `llm_call_failed` | quando a chamada falha de vez, depois do retry e do modelo de reserva | tipo e status; sem status, `detail` |
+| `debate_turn_config_error` / `debate_report_config_error` | erro de configuração (ex.: `GEMINI_API_KEY` ausente ou com caractere inválido) — falha na hora, sem retry | mensagem do problema e `detail` |
 | `llm_blocked` | bloqueio de segurança | motivo e categorias |
 | `llm_truncated` | `finishReason = MAX_TOKENS` | o turno fica com `truncated: true` |
 | `judge_trecho_invalido` | o juiz cita como falácia um trecho que não está em nenhuma das duas falas | lado e tipo da falácia descartada |

@@ -3,7 +3,7 @@
 
 import { logger } from "firebase-functions";
 import { FLEX_PRICE_MULTIPLIER, PRICES, type Price, type Role } from "./config.js";
-import type { LLMUsage } from "./llm/provider.js";
+import type { ErrorDetail, LLMUsage } from "./llm/provider.js";
 
 export function priceFor(model: string, now: Date = new Date()): Price | null {
   // Versões como "gemini-3.1-flash-lite-001" caem no preço do ID base.
@@ -46,7 +46,18 @@ export function logCall(entry: CallLog): void {
   logger.info("llm_call", { ...entry.usage, ...entry, usage: undefined });
 }
 
-export function logFailedAttempt(e: { role: Role; model: string; attempt: number; isFallback: boolean; kind: string; status: number | null; debateId?: string }): void {
+// `detail` (nome, mensagem e cause do erro, sem a chave) só vai quando não há
+// status HTTP — rede, SDK ou configuração —, que é quando "kind" sozinho não explica.
+export function logFailedAttempt(e: {
+  role: Role;
+  model: string;
+  attempt: number;
+  isFallback: boolean;
+  kind: string;
+  status: number | null;
+  detail?: ErrorDetail | null;
+  debateId?: string;
+}): void {
   logger.warn("llm_attempt_failed", e);
 }
 
@@ -54,7 +65,7 @@ export function logBlocked(e: { role: Role; model: string; reason: string; categ
   logger.warn("llm_blocked", e);
 }
 
-export function logCallFailed(e: { role: Role; kind: string; status: number | null; debateId?: string }): void {
+export function logCallFailed(e: { role: Role; kind: string; status: number | null; detail?: ErrorDetail | null; debateId?: string }): void {
   logger.error("llm_call_failed", e);
 }
 

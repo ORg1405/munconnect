@@ -46,10 +46,17 @@ export class DebateAIError extends Error {
 
 const FALLBACK_MESSAGE = "O delegado está formulando a resposta, tente de novo em alguns segundos.";
 
+// Com o Emulator Suite (VITE_USE_EMULATORS=true), mostra no console o erro
+// real devolvido pela função — o aluno continua vendo só a mensagem amigável.
+const LOG_REAL_ERRORS = import.meta.env.VITE_USE_EMULATORS === "true";
+
 export function toDebateAIError(err) {
   if (err instanceof DebateAIError) return err;
   const code = String(err?.code || "internal").replace(/^functions\//, "");
   const details = err?.details || {};
+  if (LOG_REAL_ERRORS) {
+    console.error("[debateAI] erro da função:", { code, reason: details.reason, kind: details.kind, detalhe: details.detalhe, message: err?.message, details });
+  }
   // As mensagens do backend já vêm em português e amigáveis; para erros de
   // rede/SDK sem mensagem útil, usa a mensagem padrão.
   const serverMessage = err?.message && code !== "internal" && code !== "unknown" ? err.message : null;

@@ -12,7 +12,9 @@
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.dev.json",
     "serve": "npm run build && firebase emulators:start --only functions,firestore,auth",
-    "compare": "tsx scripts/compare-opponent.ts"
+    "compare": "tsx scripts/compare-opponent.ts",
+    "check:gemini": "tsx scripts/check-gemini.ts",
+    "smoke:turn": "tsx scripts/smoke-turn.ts"
   },
   "dependencies": {
     "@google/genai": "2.27.0",

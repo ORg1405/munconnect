@@ -20,6 +20,12 @@ export function quotaError(v: QuotaViolation): HttpsError {
 export function toHttpsError(err: unknown, context: string): HttpsError {
   if (err instanceof HttpsError) return err;
   if (err instanceof LLMError) {
+    // Configuração do servidor (ex.: GEMINI_API_KEY inválida): o aluno vê a
+    // mensagem padrão; o log e `details` dizem o que ajustar (sem a chave).
+    if (err.kind === "config") {
+      logger.error(`${context}_config_error`, { message: err.message, detail: err.detail });
+      return new HttpsError("internal", MODEL_BUSY_MESSAGE, { reason: "config", kind: err.kind, detalhe: err.message });
+    }
     if (err.kind === "blocked") {
       return new HttpsError(
         "failed-precondition",
@@ -28,7 +34,7 @@ export function toHttpsError(err: unknown, context: string): HttpsError {
       );
     }
     if (err.retryable || err.kind === "other") {
-      return new HttpsError("unavailable", MODEL_BUSY_MESSAGE, { reason: "model-busy" });
+      return new HttpsError("unavailable", MODEL_BUSY_MESSAGE, { reason: "model-busy", kind: err.kind });
     }
   }
   if (err instanceof SemaphoreTimeoutError) {

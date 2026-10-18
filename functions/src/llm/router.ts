@@ -12,7 +12,7 @@ import {
   type ThinkingLevel,
 } from "../config.js";
 import { estimateCostUsd, logBlocked, logCall, logCallFailed, logFailedAttempt, logTruncated } from "../telemetry.js";
-import { LLMError, type LLMProvider, type LLMRequest, type LLMResult } from "./provider.js";
+import { LLMError, errorDetail, type LLMProvider, type LLMRequest, type LLMResult } from "./provider.js";
 import { withRetryAndFallback, type RetryDeps } from "./retry.js";
 import { Semaphore } from "./semaphore.js";
 
@@ -91,6 +91,7 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
             isFallback: f.isFallback,
             kind: f.error.kind,
             status: f.error.status,
+            ...(f.error.status === null && f.error.detail ? { detail: f.error.detail } : {}),
             debateId: opts.debateId,
           }),
       },
@@ -125,11 +126,14 @@ export async function callModel(provider: LLMProvider, opts: CallModelOptions): 
     if (err instanceof LLMError && err.kind === "blocked" && err.blockInfo) {
       logBlocked({ role: opts.role, model: role.model, ...err.blockInfo, debateId: opts.debateId });
     } else {
-      // Falha final do papel (depois de retry/reserva) — sem conteúdo.
+      // Falha final do papel (depois de retry/reserva) — sem conteúdo do
+      // aluno; sem status, vai o diagnóstico do erro (já sem a chave).
+      const status = err instanceof LLMError ? err.status : null;
       logCallFailed({
         role: opts.role,
         kind: err instanceof LLMError ? err.kind : err instanceof Error ? err.name : "other",
-        status: err instanceof LLMError ? err.status : null,
+        status,
+        ...(status === null ? { detail: err instanceof LLMError && err.detail ? err.detail : errorDetail(err) } : {}),
         debateId: opts.debateId,
       });
     }

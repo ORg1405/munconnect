@@ -40,7 +40,26 @@ export interface LLMResult {
 
 // "malformed": resposta inutilizável (vazia, MALFORMED_RESPONSE, finishReason
 // inesperado, JSON inválido) — transitória: retry e depois reserva.
-export type LLMErrorKind = "rate_limit" | "unavailable" | "network" | "timeout" | "blocked" | "malformed" | "bad_request" | "other";
+// "config": problema do nosso lado (ex.: GEMINI_API_KEY ausente ou inválida) —
+// nunca re-tentado: falha na hora com mensagem clara no log.
+export type LLMErrorKind =
+  | "rate_limit"
+  | "unavailable"
+  | "network"
+  | "timeout"
+  | "blocked"
+  | "malformed"
+  | "bad_request"
+  | "config"
+  | "other";
+
+// Diagnóstico de erro sem status HTTP (rede, SDK, configuração): nome,
+// mensagem e cause, já sem a chave da API.
+export interface ErrorDetail {
+  name: string;
+  message: string;
+  cause: { name?: string; code?: string; message?: string } | null;
+}
 
 export class LLMError extends Error {
   readonly kind: LLMErrorKind;
@@ -48,12 +67,20 @@ export class LLMError extends Error {
   readonly retryable: boolean;
   // Preenchido quando kind = "blocked" (categorias/motivo, nunca o texto).
   readonly blockInfo: { reason: string; categories: string[] } | null;
+  // Erro original (sem a chave), para o log de falhas sem status.
+  readonly detail: ErrorDetail | null;
   // true se algum chunk já foi entregue ao cliente (impossível re-tentar).
   partialOutput = false;
 
   constructor(
     message: string,
-    opts: { kind: LLMErrorKind; status?: number | null; retryable?: boolean; blockInfo?: LLMError["blockInfo"] },
+    opts: {
+      kind: LLMErrorKind;
+      status?: number | null;
+      retryable?: boolean;
+      blockInfo?: LLMError["blockInfo"];
+      detail?: ErrorDetail | null;
+    },
   ) {
     super(message);
     this.name = "LLMError";
@@ -61,6 +88,7 @@ export class LLMError extends Error {
     this.status = opts.status ?? null;
     this.retryable = opts.retryable ?? false;
     this.blockInfo = opts.blockInfo ?? null;
+    this.detail = opts.detail ?? null;
   }
 }
 
@@ -75,4 +103,27 @@ export interface LLMProvider {
 
 export function emptyUsage(): LLMUsage {
   return { inputTokens: 0, outputTokens: 0, thoughtsTokens: 0, cachedTokens: 0 };
+}
+
+// Tira a chave de qualquer texto que vá para log.
+export function redactSecrets(text: string, secret?: string): string {
+  let out = secret ? text.split(secret).join("[redacted]") : text;
+  out = out.replace(/AIza[0-9A-Za-z_-]{10,}/g, "AIza…[redacted]").replace(/([?&]key=)[^&\s]+/g, "$1[redacted]");
+  return out;
+}
+
+export function errorDetail(err: unknown, secret?: string): ErrorDetail {
+  const e = err as { name?: string; message?: string; cause?: { name?: string; code?: string; message?: string } };
+  const c = e?.cause;
+  return {
+    name: String(e?.name ?? "Error"),
+    message: redactSecrets(String(e?.message ?? err), secret).slice(0, 500),
+    cause: c
+      ? {
+          name: c.name,
+          code: typeof c.code === "string" ? c.code : undefined,
+          message: c.message ? redactSecrets(String(c.message), secret).slice(0, 500) : undefined,
+        }
+      : null,
+  };
 }

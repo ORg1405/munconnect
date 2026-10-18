@@ -27,18 +27,19 @@
 // com o bloco contrário; "tema" substitui setup.topic (tema do ciclo). "turns"
 // roda falas seguidas no mesmo debate (janela de turnos), com o juiz em cada uma.
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CONTEXT, MODEL_IDS, ROLES, SAFETY_SETTINGS, type ThinkingLevel } from "../src/config.js";
 import { buildJudgePrompt, buildOpponentPrompt, loadDossier, promptsFor, type DebateSetup, type TurnRecord } from "../src/context.js";
 import { applyJudgeGuards, parseTurnAnalysis } from "../src/judgeGuards.js";
-import { GeminiProvider } from "../src/llm/gemini.js";
+import { GeminiProvider, apiKeyProblem } from "../src/llm/gemini.js";
 import type { LLMResult } from "../src/llm/provider.js";
 import { callModel, thinkingFor } from "../src/llm/router.js";
 import { logPrefixTokensOnce } from "../src/prefixStats.js";
 import { TURN_ANALYSIS_SCHEMA } from "../src/schemas/turnAnalysis.js";
 import { estimateCostUsd } from "../src/telemetry.js";
 import { parseSetup } from "../src/validation.js";
+import { readGeminiKey } from "./secret.js";
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -46,13 +47,10 @@ function arg(name: string): string | undefined {
 }
 
 function apiKey(): string {
-  if (process.env.GEMINI_API_KEY) return process.env.GEMINI_API_KEY;
-  const file = join(import.meta.dirname, "..", ".secret.local");
-  if (existsSync(file)) {
-    const line = readFileSync(file, "utf8").split(/\r?\n/).find((l) => l.startsWith("GEMINI_API_KEY="));
-    if (line) return line.slice("GEMINI_API_KEY=".length).trim().replace(/^"|"$/g, "");
-  }
-  throw new Error("Defina GEMINI_API_KEY ou crie functions/.secret.local");
+  const { key, source } = readGeminiKey();
+  const problem = apiKeyProblem(key);
+  if (problem) throw new Error(`GEMINI_API_KEY ${problem} (origem: ${source})`);
+  return key!;
 }
 
 function words(text: string): number {
