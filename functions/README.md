@@ -169,6 +169,38 @@ em voo (op. / juiz)  ~15 / ~23                  ~8 / ~12
 - Subir `minSecondsBetweenTurns` reduz o pior caso de forma proporcional.
 - Trocar o modelo de um papel move a carga para outro pool (os limites são por modelo).
 
+## Custo por turno e por debate
+
+Tokens medidos em 2026-10-18 no comitê TPI (dossiê real), na configuração de `ROLES`: oponente e juiz pela média de 15 chamadas do `npm run compare --scenarios config`; resumo e relatório numa transcrição de 10 turnos montada com falas reais do compare. Preços de tabela (`PRICES` em `src/config.ts`, US$ por 1M de tokens; raciocínio é cobrado como saída):
+
+| Modelo | Entrada | Entrada cacheada | Saída |
+|---|---|---|---|
+| gemini-3.5-flash-lite | 0,30 | 0,03 | 2,50 |
+| gemini-3.1-flash-lite | 0,25 | 0,025 | 1,50 |
+| gemini-3.8-flash (até 31/12/2026) | 0,75 | 0,075 | 3,75 |
+
+| Chamada | Modelo | Entrada (cacheada) | Saída + raciocínio | Custo com o cache medido | Sem cache |
+|---|---|---|---|---|---|
+| Oponente (1 por turno) | 3.5 FL low | 5.467 (1.763) | 222 + 771 | US$ 0,00365 | US$ 0,00412 |
+| Juiz (1 por turno, N = 1) | 3.1 FL low | 5.519 (1.970) | 995 + 1.362 | US$ 0,00447 | US$ 0,00492 |
+| Resumo (1 a cada 3 turnos) | 3.5 FL low | 1.208 (0) | 290 + 0 | US$ 0,00109 | igual |
+| Relatório (1 por debate) | 3.8 Flash low | 9.615 (0) | 1.111 + 0 | US$ 0,0114 | igual |
+
+```
+custo por turno   = oponente + juiz + resumo / 3
+                  = 0,00365 + 0,00447 + 0,00036 ≈ US$ 0,0085   (sem cache: US$ 0,0094)
+
+debate de 10 turnos = 10 × oponente + 10 × juiz + 3 × resumo + relatório
+                  = 0,0365 + 0,0447 + 0,0033 + 0,0114 ≈ US$ 0,096   (sem cache: US$ 0,105)
+                  a partir de 01/01/2027 (3.8 Flash dobra): ≈ US$ 0,107
+```
+
+Por 1.000 debates de 10 turnos: ≈ US$ 96. Observações:
+- O raciocínio é cerca de metade do custo do oponente (53%) e do juiz (46%). O raciocínio do oponente varia muito entre rodadas (média de 1.087 tokens numa, 409 na outra, com chamadas em 0), então o custo do oponente oscila entre ~US$ 0,0025 e ~US$ 0,0045.
+- O cache implícito pegou só parte do prefixo (~1.760 de ~5.130 tokens no oponente, ~1.970 no juiz) e economiza ~10% por turno.
+- Não entram aqui: retries (cada um é uma chamada a mais), a janela crescendo nos turnos seguintes (+~300 tokens de entrada por turno no oponente, até 4 turnos) e o custo das Cloud Functions/Firestore.
+- Com `ANALYSIS.analyzeEveryTurns = 2`, o juiz cai pela metade e o turno fica em ≈ US$ 0,0063.
+
 ## Relatório final: timeouts e estado para a UI
 
 | Camada | Valor | Onde |
@@ -210,11 +242,27 @@ Nenhum desses logs inclui o texto do aluno:
 | `llm_call_failed` | quando a chamada falha de vez, depois do retry e do modelo de reserva | — |
 | `llm_blocked` | bloqueio de segurança | motivo e categorias |
 | `llm_truncated` | `finishReason = MAX_TOKENS` | o turno fica com `truncated: true` |
+| `judge_trecho_invalido` | o juiz cita como falácia um trecho que não está em nenhuma das duas falas | lado e tipo da falácia descartada |
 
 No Cloud Logging:
 
 ```
 jsonPayload.message="llm_call"
 ```
+
+## Guardas do juiz (`src/judgeGuards.ts`)
+
+Aplicadas à análise antes de gravar; o que cada uma corrigiu fica em `turns/{id}.analysisGuards`:
+
+| Guarda | Regra | Campo |
+|---|---|---|
+| Trecho de falácia | trecho (normalizado: minúsculas, pontuação, espaços; reticências aceitas) fora das duas falas → falácia descartada | `fallaciesDropped` |
+| Premissa de valor | `valor` + `falsa` → `fraca` | `valueFalseToWeak` |
+| "falsa" sem evidência | `falsa` com `evidencia_dossie` vazio → `nao_verificavel` | `falseWithoutEvidence` |
+| Falácia "outra" | confiança no máximo `possivel` | `otherFallacyDowngraded` |
+| Turno 1 | `rubrica.refutacao = null` | `refutacaoNulled` |
+| Fonte específica | fala sem fonte específica → todas as notas da rubrica limitadas a 3 | `citesSource`, `scoresCapped` |
+
+A guarda de fonte específica é uma **heurística**, não uma verificação jurídica: conta como fonte um número de artigo, regra ou resolução (`art. 12`, `artigo 8`, `regra 20`, `resolução 2334`) ou uma citação nominal de decisão (decisão, acórdão, sentença, Câmara, caso ou mandado seguido, na mesma frase, de data ou nome próprio: "a decisão de 21/11/2024", "o caso Bemba"). Não confere se a fonte existe nem se está no dossiê; uma fonte citada de outro jeito não é reconhecida, e "a Câmara reconheceu a Palestina" passa como citação.
 
 O custo acumulado da sessão fica em `debates/{id}.usage.costUsd`, e o do dia em `usage/{uid}/days/{AAAA-MM-DD}.costUsd`.

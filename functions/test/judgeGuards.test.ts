@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 const warn = vi.fn();
 vi.mock("firebase-functions", () => ({ logger: { warn, info: vi.fn(), error: vi.fn() } }));
 
-const { applyJudgeGuards, normalizeForMatch, parseTurnAnalysis, quoteAppearsIn } = await import("../src/judgeGuards.js");
+const { applyJudgeGuards, citesSpecificSource, normalizeForMatch, parseTurnAnalysis, quoteAppearsIn } = await import("../src/judgeGuards.js");
 type TurnAnalysis = import("../src/schemas/turnAnalysis.js").TurnAnalysis;
 
 const userText = "Netanyahu responde por corrupção em Israel. Se ele é corrupto, não dá para confiar em nada do que seu governo diz sobre Gaza.";
@@ -100,5 +100,50 @@ describe("parseTurnAnalysis", () => {
     expect(parseTurnAnalysis(JSON.stringify(analysis())).turno).toBe(2);
     expect(() => parseTurnAnalysis('{"turno": 1, "argu')).toThrow();
     expect(() => parseTurnAnalysis('{"turno": 1}')).toThrow(/argumento_estudante/);
+  });
+});
+
+describe("guardas da 2ª rodada", () => {
+  it("citesSpecificSource: artigo, regra, resolução ou decisão nominal (heurística)", () => {
+    expect(citesSpecificSource("Pelo art. 12 do Estatuto, a Corte é competente.")).toBe(true);
+    expect(citesSpecificSource("O artigo 8(2)(b)(xxv) tipifica a fome.")).toBe(true);
+    expect(citesSpecificSource("Conforme a regra 20 do estudo do CICV.")).toBe(true);
+    expect(citesSpecificSource("A Resolução nº 2334 do Conselho.")).toBe(true);
+    expect(citesSpecificSource("A decisão de 21/11/2024 rejeitou o desafio.")).toBe(true);
+    expect(citesSpecificSource("Como no caso Bemba, a responsabilidade de comando exige controle.")).toBe(true);
+    expect(citesSpecificSource("A Câmara de Instrução Prévia I rejeitou o desafio.")).toBe(true);
+    expect(citesSpecificSource("A Palestina aderiu ao Estatuto de Roma em 2015, então a Corte é competente.")).toBe(false);
+    expect(citesSpecificSource("Se ele é corrupto, então o mandado se justifica.")).toBe(false);
+    expect(citesSpecificSource("Isso é parte do problema.")).toBe(false);
+  });
+
+  it("sem fonte específica, notas acima de 3 viram 3; com fonte, ficam", () => {
+    const rubrica = { estrutura: 4, logica: 5, evidencia: 3, refutacao: 4, persuasao: 2, adequacao_comite: 4 };
+    const semFonte = applyJudgeGuards(analysis({ rubrica }), { ...ctx, userText: "A Corte é competente porque a Palestina aderiu em 2015." });
+    expect(semFonte.analysis.rubrica).toEqual({ estrutura: 3, logica: 3, evidencia: 3, refutacao: 3, persuasao: 2, adequacao_comite: 3 });
+    expect(semFonte.report).toMatchObject({ citesSource: false, scoresCapped: 4 });
+    const comFonte = applyJudgeGuards(analysis({ rubrica }), { ...ctx, userText: "Pelo art. 12, a Corte é competente." });
+    expect(comFonte.analysis.rubrica).toEqual(rubrica);
+    expect(comFonte.report).toMatchObject({ citesSource: true, scoresCapped: 0 });
+  });
+
+  it("limite de nota convive com refutacao null no turno 1", () => {
+    const r = applyJudgeGuards(analysis({ rubrica: { estrutura: 5, logica: 4, evidencia: 4, refutacao: 4, persuasao: 4, adequacao_comite: 4 } }), {
+      ...ctx,
+      turnIndex: 1,
+      userText: "sem fonte",
+    });
+    expect(r.analysis.rubrica.refutacao).toBeNull();
+    expect(r.analysis.rubrica.estrutura).toBe(3);
+  });
+
+  it('falácia "outra" fica no máximo em "possivel"; outros tipos mantêm a confiança', () => {
+    const outra = { ...fallacy("Se ele é corrupto, não dá para confiar"), tipo: "outra" as const };
+    const r = applyJudgeGuards(
+      analysis({ falacias: [outra, { ...outra, confianca: "possivel" }, fallacy("Se ele é corrupto, não dá para confiar")] }),
+      ctx,
+    );
+    expect(r.analysis.falacias.map((f) => f.confianca)).toEqual(["possivel", "possivel", "alta"]);
+    expect(r.report.otherFallacyDowngraded).toBe(1);
   });
 });

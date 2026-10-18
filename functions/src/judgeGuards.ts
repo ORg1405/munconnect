@@ -4,10 +4,29 @@
 //     (log judge_trecho_invalido, sem conteúdo);
 //   - premissa de valor marcada "falsa" → "fraca";
 //   - "falsa" sem evidencia_dossie → "nao_verificavel";
-//   - turno 1 → refutacao = null (não há argumento adverso a refutar).
+//   - falácia tipo "outra" → confianca no máximo "possivel";
+//   - turno 1 → refutacao = null (não há argumento adverso a refutar);
+//   - fala sem fonte específica → todas as notas da rubrica limitadas a 3.
 
 import { logger } from "firebase-functions";
-import type { TurnAnalysis } from "./schemas/turnAnalysis.js";
+import { RUBRIC_KEYS, type TurnAnalysis } from "./schemas/turnAnalysis.js";
+
+// Nota máxima quando a fala do estudante não cita fonte específica.
+export const MAX_SCORE_WITHOUT_SOURCE = 3;
+
+// HEURÍSTICA (não é verificação jurídica): a fala "cita fonte específica" se
+// tiver número de artigo, regra ou resolução, ou citação nominal de decisão —
+// uma palavra de decisão (decisão, acórdão, sentença, Câmara, caso, mandado)
+// seguida, na mesma frase, de uma data ou de um nome próprio. Não confere se a
+// fonte existe nem se está no dossiê; falso positivo/negativo é esperado em
+// falas fora desse padrão (ex.: "como decidiu a Câmara" sem data nem nome não conta).
+const NUMBERED_SOURCE_RE = [/\bart(igo)?s?\.?\s*\d+/i, /\bregra\s*\d+/i, /\bresolu[cç][aã]o\s*(n[º°o.]*\s*)?\d+/i];
+const DECISION_RE =
+  /(?<![\p{L}])([Dd]ecis[ãa]o|[Aa]c[óo]rd[ãa]o|[Ss]enten[çc]a|[Cc][âa]mara|[Cc]aso|[Mm]andado)(?![\p{L}])[^.;!?]{0,80}?(\d{1,2}\/\d{1,2}\/\d{2,4}|\d{1,2}º?\s+de\s+[a-zç]+\s+de\s+\d{4}|\s[A-ZÀ-Ú][\p{L}-]+)/u;
+
+export function citesSpecificSource(text: string): boolean {
+  return NUMBERED_SOURCE_RE.some((re) => re.test(text)) || DECISION_RE.test(text);
+}
 
 // Minúsculas, pontuação e símbolos viram espaço, espaços colapsados.
 export function normalizeForMatch(text: string): string {
@@ -57,20 +76,38 @@ export interface GuardReport {
   fallaciesDropped: number;
   valueFalseToWeak: number;
   falseWithoutEvidence: number;
+  otherFallacyDowngraded: number;
   refutacaoNulled: boolean;
+  // Heurística citesSpecificSource: false → notas limitadas a MAX_SCORE_WITHOUT_SOURCE.
+  citesSource: boolean;
+  scoresCapped: number;
 }
 
 export function applyJudgeGuards(analysis: TurnAnalysis, ctx: GuardContext): { analysis: TurnAnalysis; report: GuardReport } {
-  const report: GuardReport = { fallaciesDropped: 0, valueFalseToWeak: 0, falseWithoutEvidence: 0, refutacaoNulled: false };
+  const report: GuardReport = {
+    fallaciesDropped: 0,
+    valueFalseToWeak: 0,
+    falseWithoutEvidence: 0,
+    otherFallacyDowngraded: 0,
+    refutacaoNulled: false,
+    citesSource: citesSpecificSource(ctx.userText),
+    scoresCapped: 0,
+  };
 
-  const falacias = analysis.falacias.filter((f) => {
-    const ok = quoteAppearsIn(f.trecho ?? "", ctx.userText) || quoteAppearsIn(f.trecho ?? "", ctx.opponentText);
-    if (!ok) {
-      report.fallaciesDropped++;
-      logger.warn("judge_trecho_invalido", { debateId: ctx.debateId, turnIndex: ctx.turnIndex, lado: f.lado, tipo: f.tipo });
-    }
-    return ok;
-  });
+  const falacias = analysis.falacias
+    .filter((f) => {
+      const ok = quoteAppearsIn(f.trecho ?? "", ctx.userText) || quoteAppearsIn(f.trecho ?? "", ctx.opponentText);
+      if (!ok) {
+        report.fallaciesDropped++;
+        logger.warn("judge_trecho_invalido", { debateId: ctx.debateId, turnIndex: ctx.turnIndex, lado: f.lado, tipo: f.tipo });
+      }
+      return ok;
+    })
+    .map((f) => {
+      if (f.tipo !== "outra" || f.confianca === "possivel") return f;
+      report.otherFallacyDowngraded++;
+      return { ...f, confianca: "possivel" as const };
+    });
 
   const premissas = analysis.argumento_estudante.premissas.map((p) => {
     if (p.status !== "falsa") return p;
@@ -89,6 +126,15 @@ export function applyJudgeGuards(analysis: TurnAnalysis, ctx: GuardContext): { a
   if (ctx.turnIndex <= 1) {
     report.refutacaoNulled = rubrica.refutacao !== null;
     rubrica.refutacao = null;
+  }
+  if (!report.citesSource) {
+    for (const key of RUBRIC_KEYS) {
+      const v = rubrica[key];
+      if (typeof v === "number" && v > MAX_SCORE_WITHOUT_SOURCE) {
+        rubrica[key] = MAX_SCORE_WITHOUT_SOURCE;
+        report.scoresCapped++;
+      }
+    }
   }
 
   return {
