@@ -7,14 +7,17 @@
 import { useEffect, useRef, useState } from "react";
 import { useDebateTurn } from "../../hooks/useDebateTurn";
 import { useSpeechInput } from "../../hooks/useSpeechInput";
+import { useTurnAnalyses } from "../../hooks/useTurnAnalyses";
 import { MessageBubble, TypingIndicator } from "./Bubbles";
+import JudgePanel from "./JudgePanel";
 import { GHOST_BTN, INPUT, PRIMARY_BTN } from "./styles";
 
 const FORMULATING = "O delegado está formulando a resposta";
 
 export default function BlocChatScreen({ session, onExit }) {
   const { committee, topic, userBloc, aiBloc, setup } = session;
-  const { send, pending, streamingText, error } = useDebateTurn({ committeeId: committee.id, setup });
+  const { debateId, send, pending, streamingText, error } = useDebateTurn({ committeeId: committee.id, setup });
+  const analyses = useTurnAnalyses(debateId);
   const [turns, setTurns] = useState([]); // [{ index, userText, opponentText }]
   const [draft, setDraft] = useState("");
   const [sendingText, setSendingText] = useState(null); // fala em envio (bolha provisória)
@@ -27,7 +30,7 @@ export default function BlocChatScreen({ session, onExit }) {
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-  }, [turns, pending, streamingText]);
+  }, [turns, pending, streamingText, analyses]);
 
   async function submit() {
     const text = draft.trim();
@@ -109,6 +112,8 @@ export default function BlocChatScreen({ session, onExit }) {
           <div key={t.index} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <MessageBubble entry={userEntry(t.userText)} isUser />
             <MessageBubble entry={aiEntry(t.opponentText)} isUser={false} />
+            {/* Depois da réplica: a análise chega depois e não empurra a resposta. */}
+            <JudgePanel turn={analyses[t.index] ?? { analysisStatus: "pending" }} defaultOpen={t.index === turns.at(-1).index} />
           </div>
         ))}
 

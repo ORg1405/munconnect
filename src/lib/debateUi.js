@@ -26,3 +26,40 @@ export function blocDebateSetup({ committee, userBloc, topic, difficulty, nivelD
     simsAnteriores,
   };
 }
+
+// ── Feedback do juiz (rótulos) ──────────────────────────────────────────────
+export const RUBRIC_LABELS = [
+  ["estrutura", "Estrutura"],
+  ["logica", "Lógica"],
+  ["evidencia", "Evidência"],
+  ["refutacao", "Refutação"],
+  ["persuasao", "Persuasão"],
+  ["adequacao_comite", "Adequação ao comitê"],
+];
+
+// refutacao vem null no turno 1 (ainda não há argumento adverso).
+export function formatScore(value) {
+  return typeof value === "number" ? `${value}/5` : "—";
+}
+
+export const PREMISE_STATUS = {
+  sustentada: { label: "Sustentada", color: "var(--success)" },
+  fraca: { label: "Fraca", color: "var(--warning)" },
+  falsa: { label: "Falsa", color: "var(--danger)" },
+  nao_verificavel: { label: "Não verificável", color: "var(--text-muted)" },
+};
+
+export const PREMISE_TYPES = { fatual: "fatual", valor: "de valor", inferencial: "inferencial", implicita: "implícita" };
+
+export const FALLACY_TYPES = {
+  ataque_pessoal: "Ataque pessoal",
+  espantalho: "Espantalho",
+  falso_dilema: "Falso dilema",
+  apelo_autoridade: "Apelo à autoridade",
+  declive_escorregadio: "Declive escorregadio",
+  generalizacao_apressada: "Generalização apressada",
+  causa_falsa: "Causa falsa",
+  outra: "Outra",
+};
+
+export const FALLACY_CONFIDENCE = { alta: "alta", media: "média", possivel: "possível" };

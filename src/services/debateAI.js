@@ -7,7 +7,7 @@
 // cota restante). Erros viram DebateAIError com mensagem pronta para a UI.
 
 import { httpsCallable } from "firebase/functions";
-import { doc, onSnapshot } from "firebase/firestore";
+import { collection, doc, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db, functions } from "../firebase";
 
 // Timeouts do CLIENTE — acompanham functions/src/config.ts (FUNCTIONS.*.timeoutSeconds).
@@ -138,6 +138,35 @@ export function subscribeReportStatus(debateId, cb, onError) {
         stale: status === "generating" && !!startedAt && Date.now() - startedAt.getTime() > REPORT_STALE_AFTER_MS,
       });
     },
+    onError,
+  );
+}
+
+/**
+ * Acompanha os turnos de debates/{debateId}/turns, em ordem. O juiz grava a
+ * análise de forma assíncrona (trigger onTurnCreated), então cada turno passa
+ * por analysisStatus "pending" → "running" → "done" | "error" | "blocked"
+ * ("skipped" = fora da cadência de análise).
+ * cb recebe [{ id, index, analysisStatus, analysis, analysisGuards, disputes }].
+ * @returns {() => void} unsubscribe
+ */
+export function subscribeTurns(debateId, cb, onError) {
+  return onSnapshot(
+    query(collection(db, "debates", debateId, "turns"), orderBy("index")),
+    (snap) =>
+      cb(
+        snap.docs.map((d) => {
+          const t = d.data();
+          return {
+            id: d.id,
+            index: t.index,
+            analysisStatus: t.analysisStatus ?? "pending",
+            analysis: t.analysis ?? null,
+            analysisGuards: t.analysisGuards ?? null,
+            disputes: t.disputes ?? {},
+          };
+        }),
+      ),
     onError,
   );
 }
