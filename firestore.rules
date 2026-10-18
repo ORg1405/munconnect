@@ -149,9 +149,11 @@ service cloud.firestore {
     }
 
     // ── Treino de debate com IA (Cloud Functions debateTurn/debateReport) ─────
-    // Escritos SÓ pelas Cloud Functions (Admin SDK, ignora estas rules): o
-    // cliente lê apenas os próprios debates/turnos (incl. análise e relatório)
-    // e nunca escreve — nem turnos, nem contadores de uso/cota.
+    // Escritos pelas Cloud Functions (Admin SDK, ignora estas rules): o cliente
+    // lê apenas os próprios debates/turnos (incl. análise e relatório) e nunca
+    // escreve — nem turnos, nem contadores de uso/cota. Única exceção: o dono
+    // do debate pode registrar CONTESTAÇÕES de falácias no campo `disputes` do
+    // turno (calibração do juiz; não altera nota nem análise).
     match /debates/{debateId} {
       allow read: if isSignedIn() && resource.data.uid == request.auth.uid;
       allow write: if false;
@@ -159,7 +161,35 @@ service cloud.firestore {
       match /turns/{turnId} {
         allow read: if isSignedIn() &&
           get(/databases/$(database)/documents/debates/$(debateId)).data.uid == request.auth.uid;
-        allow write: if false;
+        allow create, delete: if false;
+        allow update: if isSignedIn() &&
+          ownsTurn(debateId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['disputes']) &&
+          validDisputes(request.resource.data.disputes);
+      }
+
+      // Dono do turno: o doc do turno não guarda uid hoje — nesse caso vale o
+      // uid do debate pai.
+      function ownsTurn(debateId) {
+        return resource.data.get('uid', null) != null
+          ? resource.data.uid == request.auth.uid
+          : get(/databases/$(database)/documents/debates/$(debateId)).data.uid == request.auth.uid;
+      }
+
+      // disputes: mapa índice da falácia ("0".."9", até 10 entradas) → texto
+      // da contestação (string de 1 a 500 caracteres).
+      function validDisputes(d) {
+        return d is map &&
+          d.size() <= 10 &&
+          d.keys().hasOnly(['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']) &&
+          validDispute(d, '0') && validDispute(d, '1') && validDispute(d, '2') &&
+          validDispute(d, '3') && validDispute(d, '4') && validDispute(d, '5') &&
+          validDispute(d, '6') && validDispute(d, '7') && validDispute(d, '8') &&
+          validDispute(d, '9');
+      }
+
+      function validDispute(d, key) {
+        return !(key in d) || (d[key] is string && d[key].size() > 0 && d[key].size() <= 500);
       }
     }
 

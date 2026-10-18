@@ -58,6 +58,8 @@ async function analyzeTurn(debateId: string, debate: DebateDoc, turn: TurnRecord
       opponentText: turn.opponentText,
       debateId,
     });
+    // update (nunca set): só os campos da análise. `disputes` é gravado pelo
+    // aluno (contestação de falácia, firestore.rules) e não pode ser apagado aqui.
     await turnRef.update({
       analysis,
       analysisStatus: "done",
