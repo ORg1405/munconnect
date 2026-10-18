@@ -13,14 +13,14 @@ import { MessageBubble, TypingIndicator } from "./Bubbles";
 import DisputeControl from "./DisputeControl";
 import JudgePanel from "./JudgePanel";
 import ReportPanel from "./ReportPanel";
-import { canEndDebate } from "../../lib/debateUi";
+import { PEDAGOGICAL_NOTICE, canEndDebate, secondsUntil, turnErrorMessage } from "../../lib/debateUi";
 import { CARD, GHOST_BTN, GOLD_BTN, GOLD_OUTLINE_BTN, INPUT, PRIMARY_BTN } from "./styles";
 
 const FORMULATING = "O delegado está formulando a resposta";
 
 export default function BlocChatScreen({ session, onExit }) {
   const { committee, topic, userBloc, aiBloc, setup } = session;
-  const { debateId, send, pending, streamingText, error } = useDebateTurn({ committeeId: committee.id, setup });
+  const { debateId, send, pending, streamingText, error, quota } = useDebateTurn({ committeeId: committee.id, setup });
   const analyses = useTurnAnalyses(debateId);
   const report = useDebateReport(debateId);
   const [turns, setTurns] = useState([]); // [{ index, userText, opponentText }]
@@ -28,6 +28,7 @@ export default function BlocChatScreen({ session, onExit }) {
   const [sendingText, setSendingText] = useState(null); // fala em envio (bolha provisória)
   const [showEndModal, setShowEndModal] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const scrollRef = useRef(null);
   // Ditado: cada trecho final entra no fim do rascunho, que segue editável.
   const speech = useSpeechInput({
@@ -51,7 +52,7 @@ export default function BlocChatScreen({ session, onExit }) {
 
   async function submit() {
     const text = draft.trim();
-    if (!text || pending) return;
+    if (!text || blockedInput) return;
     speech.stop();
     setSendingText(text);
     const result = await send(text);
@@ -71,7 +72,23 @@ export default function BlocChatScreen({ session, onExit }) {
 
   const userEntry = (text) => ({ country: { code2: userBloc.code2, name: userBloc.name }, text });
   const aiEntry = (text) => ({ country: { code2: aiBloc.code2, name: aiBloc.name }, text });
-  const busy = error?.code === "unavailable" || error?.reason === "model-busy";
+
+  // Cota: o servidor decide; aqui só evitamos o envio que ele recusaria e
+  // mostramos a contagem regressiva ao vivo (intervalo mínimo entre falas).
+  const cooldownAt = error?.reason === "cooldown" ? error.resetsAt : quota?.nextTurnAvailableAt;
+  const cooldownLeft = secondsUntil(cooldownAt, new Date(now));
+  const outOfTurns = quota?.turnsLeftInDebate === 0 || error?.reason === "debate-turns";
+  const dailyBlocked = error?.reason === "daily-debates";
+  const ticking = cooldownLeft > 0 || dailyBlocked;
+  useEffect(() => {
+    if (!ticking) return undefined;
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [ticking]);
+  const errorUi = error && !pending ? turnErrorMessage(error, new Date(now)) : null;
+  const blockedInput = pending || cooldownLeft > 0 || outOfTurns || dailyBlocked;
+  const sendDisabled = blockedInput || !draft.trim();
+  const toneColor = { busy: "var(--text-secondary)", quota: "var(--warning)", blocked: "var(--danger)", error: "var(--danger)" };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100vh", padding: "20px 24px", maxWidth: 900, margin: "0 auto", width: "100%" }}>
@@ -98,6 +115,8 @@ export default function BlocChatScreen({ session, onExit }) {
             <span><span style={{ color: "var(--brand-400)" }}>Tema:</span> {topic}</span>
             <span><span style={{ color: "var(--brand-400)" }}>Você:</span> {userBloc.name}</span>
             <span><span style={{ color: "var(--brand-400)" }}>vs:</span> {aiBloc.name}</span>
+            {quota && <span><span style={{ color: "var(--brand-400)" }}>Falas restantes:</span> {quota.turnsLeftInDebate}</span>}
+            {quota && <span><span style={{ color: "var(--brand-400)" }}>Debates hoje:</span> {quota.debatesLeftToday} restantes</span>}
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             {canEnd && (
@@ -115,6 +134,10 @@ export default function BlocChatScreen({ session, onExit }) {
           </div>
         </div>
       </div>
+
+      <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-muted)", margin: "-6px 4px 10px", lineHeight: 1.5, flexShrink: 0 }}>
+        {PEDAGOGICAL_NOTICE}
+      </p>
 
       {/* Messages */}
       <div
@@ -163,14 +186,15 @@ export default function BlocChatScreen({ session, onExit }) {
 
       {!showReport && (
         <>
-          {error && !pending && (
-            <p
-              role="status"
-              style={{ fontSize: "var(--fs-small)", color: busy ? "var(--text-secondary)" : "var(--danger)", margin: "8px 0", fontFamily: "var(--font-mono)" }}
-            >
-              {busy ? `${FORMULATING}. Sua fala continua na caixa abaixo: envie de novo em alguns segundos.` : error.message}
+          {errorUi ? (
+            <p role="status" style={{ fontSize: "var(--fs-small)", color: toneColor[errorUi.tone], margin: "8px 0", fontFamily: "var(--font-mono)" }}>
+              {errorUi.message}
             </p>
-          )}
+          ) : outOfTurns ? (
+            <p role="status" style={{ fontSize: "var(--fs-small)", color: "var(--warning)", margin: "8px 0", fontFamily: "var(--font-mono)" }}>
+              Você usou todas as falas deste debate. Encerre para receber seu relatório.
+            </p>
+          ) : null}
 
           {/* Input */}
           <div style={{
@@ -210,15 +234,16 @@ export default function BlocChatScreen({ session, onExit }) {
             />
             <button
               onClick={submit}
-              disabled={pending || !draft.trim()}
+              disabled={sendDisabled}
               style={{
                 ...PRIMARY_BTN,
-                opacity: pending || !draft.trim() ? 0.5 : 1,
-                cursor: pending || !draft.trim() ? "not-allowed" : "pointer",
+                opacity: sendDisabled ? 0.5 : 1,
+                cursor: sendDisabled ? "not-allowed" : "pointer",
                 alignSelf: "stretch",
+                minWidth: 96,
               }}
             >
-              {pending ? "…" : error ? "Reenviar" : "Enviar"}
+              {pending ? "…" : cooldownLeft > 0 ? `${cooldownLeft} s` : error ? "Reenviar" : "Enviar"}
             </button>
           </div>
           <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", margin: "6px 4px 0", minHeight: "1.2em" }}>
@@ -228,7 +253,9 @@ export default function BlocChatScreen({ session, onExit }) {
                 ? `Ouvindo… ${speech.interim}`
                 : !speech.supported
                   ? "Ditado por voz indisponível neste navegador: digite sua fala."
-                  : "Use o microfone ou digite; revise o texto antes de enviar."}
+                  : cooldownLeft > 0 && !errorUi
+                    ? `Você poderá falar de novo em ${cooldownLeft} s. Enquanto isso, prepare sua fala.`
+                    : "Use o microfone ou digite; revise o texto antes de enviar."}
           </p>
         </>
       )}

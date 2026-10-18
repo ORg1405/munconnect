@@ -96,3 +96,81 @@ export const REPORT_CRITERIA_LABELS = [
   ["reacaoContraArgumentos", "Reação a contra-argumentos"],
   ["consistenciaPoliticaExterna", "Consistência com a posição do bloco"],
 ];
+
+// ── Cota e erros do debate ──────────────────────────────────────────────────
+// Espelham functions/src/config.ts → QUOTA (há teste conferindo). O servidor é
+// quem decide; aqui é só para a mensagem e a contagem regressiva ao vivo.
+export const QUOTA_LIMITS = { debatesPerDay: 3, turnsPerDebate: 12, minSecondsBetweenTurns: 20 };
+export const QUOTA_TIME_ZONE = "America/Sao_Paulo";
+const TIME_ZONE_LABEL = "horário de Brasília";
+
+const FORMULATING_MESSAGE = "O delegado está formulando a resposta. Sua fala continua na caixa: envie de novo em alguns segundos.";
+
+// 45 s · 7 min · 2 h · 3 h 5 min (arredonda para cima: nunca promete antes da hora).
+export function formatDuration(ms) {
+  const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+  if (totalSeconds < 60) return `${totalSeconds} s`;
+  const totalMinutes = Math.ceil(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes} min`;
+  const h = Math.floor(totalMinutes / 60);
+  const m = totalMinutes % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+// "à meia-noite (horário de Brasília), daqui a 6 h" · "às 14:30 (horário de Brasília), daqui a 20 min"
+export function formatResetTime(resetsAt, now = new Date(), timeZone = QUOTA_TIME_ZONE) {
+  const at = resetsAt instanceof Date ? resetsAt : new Date(resetsAt);
+  if (Number.isNaN(at.getTime())) return "";
+  const hhmm = new Intl.DateTimeFormat("pt-BR", { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(at);
+  const when = hhmm === "00:00" ? "à meia-noite" : `às ${hhmm}`;
+  return `${when} (${TIME_ZONE_LABEL}), daqui a ${formatDuration(at.getTime() - now.getTime())}`;
+}
+
+// Segundos até poder falar de novo (0 = liberado).
+export function secondsUntil(at, now = new Date()) {
+  if (!at) return 0;
+  const t = (at instanceof Date ? at : new Date(at)).getTime();
+  return Number.isNaN(t) ? 0 : Math.max(0, Math.ceil((t - now.getTime()) / 1000));
+}
+
+// Mensagem de cota em português (null se o erro não for de cota/trava de turno).
+export function quotaMessage(err, now = new Date()) {
+  switch (err?.reason) {
+    case "daily-debates":
+      return (
+        `Você já usou seus ${QUOTA_LIMITS.debatesPerDay} debates de hoje. ` +
+        (err.resetsAt ? `Sua cota renova ${formatResetTime(err.resetsAt, now)}.` : "Sua cota renova à meia-noite.")
+      );
+    case "debate-turns":
+      return `Este debate chegou ao limite de ${QUOTA_LIMITS.turnsPerDebate} falas. Encerre a sessão para receber seu relatório ou comece um novo debate.`;
+    case "cooldown": {
+      const s = err.resetsAt ? secondsUntil(err.resetsAt, now) : (err.retryAfterSeconds ?? QUOTA_LIMITS.minSecondsBetweenTurns);
+      return s > 0
+        ? `Respire e prepare o próximo argumento: você poderá falar de novo em ${s} s.`
+        : "Pronto: você já pode enviar sua fala.";
+    }
+    case "turn-in-progress":
+      return "A delegação ainda está respondendo à sua fala anterior. Aguarde a resposta antes de enviar outra.";
+    default:
+      return null;
+  }
+}
+
+// Qualquer erro do envio → mensagem para o aluno, nunca o texto técnico.
+// tone: "quota" | "busy" | "blocked" | "error" (a tela escolhe a cor).
+export function turnErrorMessage(err, now = new Date()) {
+  const quota = quotaMessage(err, now);
+  if (quota) return { tone: "quota", message: quota };
+  if (err?.reason === "blocked") {
+    return { tone: "blocked", message: "Essa troca foi barrada pelos filtros de segurança. Reformule sua fala e tente de novo." };
+  }
+  if (err?.code === "unauthenticated") return { tone: "error", message: "Faça login com sua conta para usar o treino de debate." };
+  if (err?.code === "invalid-argument") {
+    return { tone: "error", message: "Não foi possível enviar esta fala. Revise o texto (até 2.000 caracteres) e tente de novo." };
+  }
+  return { tone: "busy", message: FORMULATING_MESSAGE };
+}
+
+export const PEDAGOGICAL_NOTICE =
+  "Exercício pedagógico: o oponente defende a posição processual do bloco dele, não uma opinião sobre o caso real. " +
+  "O feedback é automático e pode errar.";

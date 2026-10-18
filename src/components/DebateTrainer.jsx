@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MUN_COUNTRIES, findCountryByCode } from "../data/munCountries";
 import { MUN_COMMITTEES, findCommitteeById } from "../data/munCommittees";
 import { CARD, GHOST_BTN, GOLD_BTN, GOLD_OUTLINE_BTN, INPUT, PRIMARY_BTN, SECTION_LABEL } from "./debate/styles";
-import { blocDebateSetup, isBlocCommittee, opposingBloc } from "../lib/debateUi";
+import { PEDAGOGICAL_NOTICE, blocDebateSetup, isBlocCommittee, opposingBloc } from "../lib/debateUi";
 import { MessageBubble, TypingIndicator } from "./debate/Bubbles";
 import BlocChatScreen from "./debate/BlocChatScreen";
 
@@ -284,6 +284,9 @@ function SetupScreen({ onStart }) {
           </div>
           <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-muted)", fontFamily: "var(--font-mono)", margin: "10px 0 0" }}>
             A IA representa o {opposingBloc(committee, userBloc).name}.
+          </p>
+          <p style={{ fontSize: "var(--fs-tiny)", color: "var(--text-secondary)", margin: "8px 0 0", lineHeight: 1.5 }}>
+            {PEDAGOGICAL_NOTICE}
           </p>
         </section>
       )}
